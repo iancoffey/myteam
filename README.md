@@ -28,7 +28,8 @@ Open http://localhost:3000 and sign in as `coach@example.com` / `soccer`. Data l
 3. Settings → Environment Variables:
    - `AUTH_SECRET`: output of `openssl rand -base64 32`
    - `AUTH_USERS`: `you@example.com:a-long-password,coach2@example.com:another-password`
-4. Deploy. The `vercel-build` script applies database migrations, then builds.
+4. Deploy. The build checks these settings, applies database migrations, then builds.
+   Set the variables for Production and Preview, or preview deploys stop with a message listing what's missing.
 
 To add or remove a coach, edit `AUTH_USERS` and redeploy. Removed coaches are signed out on their
 next request.
@@ -42,6 +43,7 @@ It is applied locally on the next dev-server start and on Vercel at the next dep
 
 - `app/(app)/`: signed-in pages: teams, team hub, roster, schedule, team settings, field mode
 - `app/actions.ts`: every mutation (server actions), each checking the team belongs to the coach
-- `components/FieldMode.tsx`: game day: check-in, lineup, clock, swaps, undo, save
+- `components/FieldMode.tsx`: game day: check-in, lineup, period clock with swap marks, swaps, game log, undo, save
+- `app/(app)/teams/[id]/games/[gameId]`: a saved game: subs by period and minutes
 - `lib/formats.ts`: age-group defaults and game formats
 - `prototype/field.html`: the original single-file prototype

@@ -3,7 +3,7 @@ import { deleteTeam } from '@/app/actions'
 import { ConfirmButton } from '@/components/ConfirmButton'
 import { TeamForm } from '@/components/TeamForm'
 import { getOwnedTeam } from '@/lib/data'
-import { isAge, type FormatKey } from '@/lib/formats'
+import { cleanGroups, isAge, type FormatKey } from '@/lib/formats'
 
 export default async function EditTeamPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -19,6 +19,7 @@ export default async function EditTeamPage({ params }: { params: Promise<{ id: s
         teamId={t.id}
         name={t.name}
         age={isAge(t.age) ? t.age : 'U6'}
+        groups={cleanGroups(t.groups)}
         settings={{
           format: t.format as FormatKey,
           onField: t.onField,

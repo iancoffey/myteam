@@ -1,4 +1,7 @@
+import { sql } from 'drizzle-orm'
 import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import type { PositionGroup } from '../formats'
+import type { GameLogEntry } from '../gamelog'
 
 // Coaches. Only an email is stored; how they log in (static password now, Google later) lives outside this table.
 export const users = pgTable('users', {
@@ -24,6 +27,8 @@ export const teams = pgTable(
     periodMin: integer('period_min').notNull(),
     // 0 = swap only at breaks
     subMin: integer('sub_min').notNull(),
+    // Coach-defined position groups, e.g. Left/Center/Right/Goalie or Offense/Mids/Defense/Goalies.
+    groups: jsonb('groups').$type<PositionGroup[]>().notNull().default(sql`'[]'::jsonb`),
     // IANA zone captured from the coach's browser, used to show and enter event times.
     timeZone: text('time_zone').notNull().default('America/New_York'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -40,6 +45,8 @@ export const players = pgTable(
       .notNull()
       .references(() => teams.id, { onDelete: 'cascade' }),
     firstName: text('first_name').notNull(),
+    // Ids from teams.groups this kid is tagged with. Ids of deleted groups are ignored on read.
+    groupIds: jsonb('group_ids').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     sort: integer('sort').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -97,6 +104,10 @@ export const games = pgTable(
     us: integer('us').notNull(),
     them: integer('them').notNull(),
     minutes: jsonb('minutes').$type<Record<string, number>>().notNull(),
+    // Swaps, goals and arrivals by period, plus the period setup they were timed against.
+    log: jsonb('log').$type<GameLogEntry[]>().notNull().default(sql`'[]'::jsonb`),
+    periods: integer('periods'),
+    periodMin: integer('period_min'),
     playedAt: timestamp('played_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('games_team_idx').on(t.teamId)],

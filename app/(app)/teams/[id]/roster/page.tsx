@@ -2,13 +2,16 @@ import Link from 'next/link'
 import { addGuardian, addPlayers, removeGuardian, removePlayer, renamePlayer } from '@/app/actions'
 import { ActionForm } from '@/components/ActionForm'
 import { ConfirmButton } from '@/components/ConfirmButton'
+import { GroupChips } from '@/components/GroupChips'
 import { getOwnedTeam, listGuardians, listPlayers } from '@/lib/data'
+import { cleanGroups } from '@/lib/formats'
 import { formatPhone } from '@/lib/phone'
 
 export default async function RosterPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const t = await getOwnedTeam(id)
   const [kids, parents] = await Promise.all([listPlayers(t.id), listGuardians(t.id)])
+  const groups = cleanGroups(t.groups)
 
   return (
     <main className="page">
@@ -28,6 +31,14 @@ export default async function RosterPage({ params }: { params: Promise<{ id: str
       </section>
 
       <h2 className="h2">{kids.length} kids</h2>
+      {groups.length === 0 ? (
+        <p className="note">
+          Want position groups like Left/Center/Right or Offense/Defense? Set them up in{' '}
+          <Link href={`/teams/${t.id}/edit`}>Team settings</Link>, then tag kids here.
+        </p>
+      ) : (
+        <p className="note">Tap the groups each kid can play. A kid can be in more than one.</p>
+      )}
       <div className="list">
         {kids.map((k) => {
           const mine = parents.filter((p) => p.playerId === k.id)
@@ -41,6 +52,10 @@ export default async function RosterPage({ params }: { params: Promise<{ id: str
                   <ConfirmButton className="btn small danger" confirmLabel="Tap to remove">Remove</ConfirmButton>
                 </form>
               </div>
+
+              {groups.length > 0 && (
+                <GroupChips teamId={t.id} playerId={k.id} groups={groups} selected={k.groupIds.filter((id) => groups.some((g) => g.id === id))} />
+              )}
 
               {mine.map((g) => (
                 <div key={g.id} className="guardian">

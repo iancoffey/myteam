@@ -8,6 +8,20 @@
       "when": 1790784693023,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790788449632,
+      "tag": "0001_position_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790788818022,
+      "tag": "0002_game_log",
+      "breakpoints": true
     }
   ]
 }

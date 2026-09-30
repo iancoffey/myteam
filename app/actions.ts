@@ -6,7 +6,8 @@ import { redirect } from 'next/navigation'
 import { checkPassword, endSession, requireSession, startSession, upsertUser } from '@/lib/auth'
 import { getOwnedTeam } from '@/lib/data'
 import { db, schema } from '@/lib/db'
-import { AGES, FORMATS, LIMITS, agePreset, isAge, type FormatKey } from '@/lib/formats'
+import { AGES, FORMATS, LIMITS, agePreset, cleanGroups, isAge, type FormatKey } from '@/lib/formats'
+import { cleanLog } from '@/lib/gamelog'
 import { normalizeEmail, normalizePhone } from '@/lib/phone'
 import { isValidTimeZone, zonedToDate } from '@/lib/time'
 
@@ -55,6 +56,10 @@ function parseTeam(fd: FormData) {
   const format: FormatKey = fmtRaw in FORMATS || fmtRaw === 'custom' ? fmtRaw : preset.format
   const base = format === 'custom' ? null : FORMATS[format as keyof typeof FORMATS]
   const tz = str(fd, 'timeZone')
+  let groups: unknown = []
+  try {
+    groups = JSON.parse(str(fd, 'groups') || '[]')
+  } catch {}
   return {
     name: name || `${age} team`,
     age,
@@ -64,6 +69,7 @@ function parseTeam(fd: FormData) {
     periods: int(fd, 'periods', LIMITS.periods, preset.periods),
     periodMin: int(fd, 'periodMin', LIMITS.periodMin, preset.periodMin),
     subMin: int(fd, 'subMin', LIMITS.subMin, preset.subMin),
+    groups: cleanGroups(groups),
     timeZone: isValidTimeZone(tz) ? tz : undefined,
   }
 }
@@ -168,6 +174,34 @@ export async function addGuardian(_: FormState, fd: FormData): Promise<FormState
   return { ok: `Added ${firstName}.` }
 }
 
+// Called straight from the roster's group chips, one tap per change.
+export async function setPlayerGroups(input: {
+  teamId: string
+  playerId: string
+  groupIds: string[]
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const team = await getOwnedTeam(input.teamId)
+  const valid = new Set(team.groups.map((g) => g.id))
+  const groupIds = [...new Set((input.groupIds ?? []).filter((id) => typeof id === 'string' && valid.has(id)))]
+  const d = await db()
+  const updated = await d
+    .update(players)
+    .set({ groupIds })
+    .where(and(eq(players.id, input.playerId), eq(players.teamId, team.id)))
+    .returning({ id: players.id })
+  if (!updated.length) return { ok: false, error: 'That player is no longer on this team.' }
+  refreshTeam(team.id)
+  return { ok: true }
+}
+
+export async function deleteGame(fd: FormData) {
+  const team = await getOwnedTeam(str(fd, 'teamId'))
+  const d = await db()
+  await d.delete(games).where(and(eq(games.id, str(fd, 'gameId')), eq(games.teamId, team.id)))
+  refreshTeam(team.id)
+  redirect(`/teams/${team.id}`)
+}
+
 export async function removeGuardian(fd: FormData) {
   const team = await getOwnedTeam(str(fd, 'teamId'))
   const d = await db()
@@ -260,6 +294,7 @@ export async function saveGame(input: {
   us: number
   them: number
   minutes: Record<string, number>
+  log?: unknown
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const team = await getOwnedTeam(input.teamId)
   const d = await db()
@@ -288,6 +323,9 @@ export async function saveGame(input: {
       us: Math.max(0, Math.min(99, input.us | 0)),
       them: Math.max(0, Math.min(99, input.them | 0)),
       minutes,
+      log: cleanLog(input.log, valid, team.periods, team.periodMin * 60 * 1000),
+      periods: team.periods,
+      periodMin: team.periodMin,
     })
     .onConflictDoNothing({ target: games.clientId })
   refreshTeam(team.id)

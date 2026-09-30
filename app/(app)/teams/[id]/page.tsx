@@ -1,19 +1,21 @@
 import Link from 'next/link'
 import { MessageButtons } from '@/components/MessageButtons'
-import { getOwnedTeam, listGuardians, listPlayers, listUpcomingEvents, seasonMinutes } from '@/lib/data'
-import { formatLabel, settingsLine, type FormatKey } from '@/lib/formats'
+import { getOwnedTeam, listGames, listGuardians, listPlayers, listUpcomingEvents, seasonMinutes } from '@/lib/data'
+import { cleanGroups, formatLabel, settingsLine, type FormatKey } from '@/lib/formats'
 import { eventMessage } from '@/lib/messages'
 import { formatDay, formatTime } from '@/lib/time'
 
 export default async function TeamPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const t = await getOwnedTeam(id)
-  const [kids, parents, upcoming, season] = await Promise.all([
+  const [kids, parents, upcoming, season, recent] = await Promise.all([
     listPlayers(t.id),
     listGuardians(t.id),
     listUpcomingEvents(t.id),
     seasonMinutes(t.id),
+    listGames(t.id, 5),
   ])
+  const groups = cleanGroups(t.groups)
   const settings = { format: t.format as FormatKey, onField: t.onField, keeper: t.keeper, periods: t.periods, periodMin: t.periodMin, subMin: t.subMin }
   const next = upcoming[0]
   const phones = [...new Set(parents.map((p) => p.phone).filter((p): p is string => !!p))]
@@ -35,6 +37,9 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
           <span className="badge">{t.age}</span>
           <span className="badge">{formatLabel(settings)}</span> {settingsLine(settings)}
         </p>
+        {groups.length > 0 && (
+          <p className="muted" style={{ margin: '4px 0 0' }}>Groups: {groups.map((g) => g.name).join(', ')}</p>
+        )}
       </div>
 
       <Link href={`/teams/${t.id}/field`} className="btn primary big">Game day</Link>
@@ -104,6 +109,23 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
             </tbody>
           </table>
         </div>
+      )}
+
+      {recent.length > 0 && (
+        <>
+          <h2 className="h2">Recent games</h2>
+          <div className="stack">
+            {recent.map((gm) => (
+              <Link key={gm.id} href={`/teams/${t.id}/games/${gm.id}`} className="link-row">
+                <span>
+                  Us {gm.us} – {gm.them} {gm.opponent ?? 'Them'}
+                  <span className="sub">{formatDay(gm.playedAt, t.timeZone)} · subs by period</span>
+                </span>
+                <span>→</span>
+              </Link>
+            ))}
+          </div>
+        </>
       )}
 
       <h2 className="h2">Message all parents</h2>

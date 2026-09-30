@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, asc, eq, gte, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray } from 'drizzle-orm'
 import { notFound } from 'next/navigation'
 import { db, schema } from './db'
 import { requireSession } from './auth'
@@ -68,4 +68,27 @@ export async function seasonMinutes(teamId: string) {
   const total: Record<string, number> = {}
   for (const r of rows) for (const [id, ms] of Object.entries(r.minutes)) total[id] = (total[id] ?? 0) + ms
   return { games: rows.length, ms: total }
+}
+
+export async function listGames(teamId: string, limit = 10) {
+  const d = await db()
+  return d
+    .select({ id: games.id, us: games.us, them: games.them, playedAt: games.playedAt, opponent: events.opponent })
+    .from(games)
+    .leftJoin(events, eq(events.id, games.eventId))
+    .where(eq(games.teamId, teamId))
+    .orderBy(desc(games.playedAt))
+    .limit(limit)
+}
+
+export async function getGame(teamId: string, gameId: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(gameId)) notFound()
+  const d = await db()
+  const [row] = await d
+    .select({ game: games, opponent: events.opponent })
+    .from(games)
+    .leftJoin(events, eq(events.id, games.eventId))
+    .where(and(eq(games.id, gameId), eq(games.teamId, teamId)))
+  if (!row) notFound()
+  return row
 }

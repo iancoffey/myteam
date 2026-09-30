@@ -2,14 +2,16 @@
   "name": "myteam",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9"
+  },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/prebuild.mjs && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "vercel-build": "drizzle-kit migrate && next build"
+    "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

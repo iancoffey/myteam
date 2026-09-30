@@ -3,17 +3,32 @@
 import { useEffect, useState } from 'react'
 import { useKeptForm } from './ActionForm'
 import { createTeam, updateTeam } from '@/app/actions'
-import { AGES, FORMATS, FORMAT_KEYS, LIMITS, agePreset, type Age, type FormatKey, type TeamSettings } from '@/lib/formats'
+import {
+  AGES,
+  FORMATS,
+  FORMAT_KEYS,
+  GROUP_PRESETS,
+  LIMITS,
+  MAX_GROUPS,
+  MAX_GROUP_NAME,
+  agePreset,
+  newGroupId,
+  type Age,
+  type FormatKey,
+  type PositionGroup,
+  type TeamSettings,
+} from '@/lib/formats'
 
 type Props =
   | { mode: 'create' }
-  | { mode: 'edit'; teamId: string; name: string; age: Age; settings: TeamSettings }
+  | { mode: 'edit'; teamId: string; name: string; age: Age; settings: TeamSettings; groups: PositionGroup[] }
 
 export function TeamForm(props: Props) {
   const { state, pending, ref, onSubmit } = useKeptForm(props.mode === 'create' ? createTeam : updateTeam)
   const [age, setAge] = useState<Age>(props.mode === 'edit' ? props.age : 'U6')
   const [s, setS] = useState<TeamSettings>(props.mode === 'edit' ? props.settings : agePreset('U6'))
   const [timeZone, setTimeZone] = useState('')
+  const [groups, setGroups] = useState<PositionGroup[]>(props.mode === 'edit' ? props.groups : [])
 
   useEffect(() => {
     try {
@@ -27,6 +42,15 @@ export function TeamForm(props: Props) {
   }
   function pickFormat(f: FormatKey) {
     setS((prev) => (f === 'custom' ? { ...prev, format: f } : { ...prev, format: f, ...FORMATS[f] }))
+  }
+  // Reuse ids for names that already exist so kids keep their tags when switching presets.
+  function applyPreset(names: string[]) {
+    setGroups((prev) =>
+      names.map((name) => ({ id: prev.find((g) => g.name.trim().toLowerCase() === name.toLowerCase())?.id ?? newGroupId(), name })),
+    )
+  }
+  function isPreset(names: string[]) {
+    return groups.length === names.length && groups.every((g, i) => g.name.trim().toLowerCase() === names[i].toLowerCase())
   }
   function step(k: keyof typeof LIMITS, d: number) {
     const [lo, hi] = LIMITS[k]
@@ -44,6 +68,7 @@ export function TeamForm(props: Props) {
       <input type="hidden" name="periodMin" value={s.periodMin} />
       <input type="hidden" name="subMin" value={s.subMin} />
       <input type="hidden" name="timeZone" value={timeZone} />
+      <input type="hidden" name="groups" value={JSON.stringify(groups.filter((g) => g.name.trim()))} />
 
       <div>
         <label className="lbl" htmlFor="name">Team name</label>
@@ -109,6 +134,49 @@ export function TeamForm(props: Props) {
         <button type="button" aria-label="Swap more often" onClick={() => step('subMin', -1)}>−</button>
         <output>{s.subMin ? `every ${s.subMin} min` : 'at breaks'}</output>
         <button type="button" aria-label="Swap less often" onClick={() => step('subMin', 1)}>+</button>
+      </div>
+
+      <h2 className="h2">Position groups (optional)</h2>
+      <p className="note">
+        Tag kids with these on the Roster page. Lineups and suggested swaps keep the groups balanced, and a group called
+        Goalie (or Keeper) supplies the keeper.
+      </p>
+      {GROUP_PRESETS.map((p) => (
+        <button key={p.label} type="button" className="btn block toggle" aria-pressed={isPreset(p.names)} onClick={() => applyPreset(p.names)}>
+          {p.label}
+        </button>
+      ))}
+      {groups.map((g, i) => (
+        <div key={g.id} className="group-row">
+          <input
+            type="text"
+            value={g.name}
+            maxLength={MAX_GROUP_NAME}
+            placeholder="Group name"
+            aria-label={`Group ${i + 1} name`}
+            autoCapitalize="words"
+            autoComplete="off"
+            onChange={(e) => setGroups(groups.map((x) => (x.id === g.id ? { ...x, name: e.target.value } : x)))}
+          />
+          <button type="button" className="btn" aria-label={`Remove ${g.name || 'group'}`} onClick={() => setGroups(groups.filter((x) => x.id !== g.id))}>
+            ✕
+          </button>
+        </div>
+      ))}
+      <div className="btn-grid">
+        <button
+          type="button"
+          className="btn"
+          disabled={groups.length >= MAX_GROUPS}
+          onClick={() => setGroups([...groups, { id: newGroupId(), name: '' }])}
+        >
+          + Add group
+        </button>
+        {groups.length > 0 && (
+          <button type="button" className="btn" onClick={() => setGroups([])}>
+            No groups
+          </button>
+        )}
       </div>
 
       {props.mode === 'create' && (

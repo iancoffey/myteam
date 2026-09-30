@@ -77,3 +77,52 @@ export function breakName(periods: number) {
 export function pairsPerSwap(onField: number) {
   return onField <= 5 ? 99 : Math.round(onField / 3.5)
 }
+
+export function endPeriodLabel(periods: number, p: number) {
+  if (periods === 1) return 'End game'
+  if (periods === 2) return p === 1 ? 'End 1st half' : 'End 2nd half'
+  if (periods === 4) return `End Q${p}`
+  return `End period ${p}`
+}
+
+// ---------- position groups ----------
+
+export type PositionGroup = { id: string; name: string }
+
+export const GROUP_PRESETS: { label: string; names: string[] }[] = [
+  { label: 'Left · Center · Right · Goalie', names: ['Left', 'Center', 'Right', 'Goalie'] },
+  { label: 'Offense · Mids · Defense · Goalies', names: ['Offense', 'Mids', 'Defense', 'Goalies'] },
+]
+export const MAX_GROUPS = 8
+export const MAX_GROUP_NAME = 20
+
+// A group named like "Goalie", "Goalies", "Keeper" or "GK" supplies the keeper in lineups.
+export function isKeeperGroup(name: string) {
+  return /goal|keeper|\bgk\b/i.test(name)
+}
+
+export function newGroupId() {
+  try {
+    return crypto.randomUUID()
+  } catch {
+    // crypto.randomUUID needs a secure context; plain-http LAN testing falls back to this.
+    return `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+  }
+}
+
+// Validates groups coming from a form or the database: trimmed, unique names, sane ids, capped count.
+export function cleanGroups(input: unknown): PositionGroup[] {
+  if (!Array.isArray(input)) return []
+  const seen = new Set<string>()
+  const out: PositionGroup[] = []
+  for (const g of input) {
+    if (!g || typeof g !== 'object') continue
+    const id = typeof g.id === 'string' ? g.id : ''
+    const name = typeof g.name === 'string' ? g.name.trim().slice(0, MAX_GROUP_NAME) : ''
+    if (!/^[A-Za-z0-9_-]{1,40}$/.test(id) || !name || seen.has(name.toLowerCase())) continue
+    seen.add(name.toLowerCase())
+    out.push({ id, name })
+    if (out.length >= MAX_GROUPS) break
+  }
+  return out
+}
