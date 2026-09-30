@@ -25,11 +25,12 @@ Open http://localhost:3000 and sign in as `coach@example.com` / `soccer`. Data l
 
 1. Import the repo into Vercel.
 2. Storage → add a **Neon** Postgres database to the project. It sets `DATABASE_URL`.
-3. Settings → Environment Variables:
-   - `AUTH_SECRET`: output of `openssl rand -base64 32`
+3. Settings → Environment Variables (Production and Preview):
    - `AUTH_USERS`: `you@example.com:a-long-password,coach2@example.com:another-password`
-4. Deploy. The build checks these settings, applies database migrations, then builds.
-   Set the variables for Production and Preview, or preview deploys stop with a message listing what's missing.
+   - `AUTH_SECRET` (optional): a long random string, e.g. `openssl rand -base64 32`. Without it,
+     sign-ins are signed with a key derived from `DATABASE_URL`.
+4. Deploy. The build only compiles the app; it never needs the database. The app creates and
+   updates its tables on first use. If a setting is missing, the sign-in page lists what to add.
 
 To add or remove a coach, edit `AUTH_USERS` and redeploy. Removed coaches are signed out on their
 next request.
@@ -37,7 +38,7 @@ next request.
 ## Database changes
 
 Edit `lib/db/schema.ts`, then run `npm run db:generate` and commit the new file in `drizzle/`.
-It is applied locally on the next dev-server start and on Vercel at the next deploy.
+The app applies it on its next start, locally and in production.
 
 ## Layout
 

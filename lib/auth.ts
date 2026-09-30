@@ -16,18 +16,30 @@ function isProd() {
   return process.env.NODE_ENV === 'production'
 }
 
-// Without AUTH_SECRET in development, sign with a random key made at startup (kept across hot
-// reloads), so no signing key is ever published in the source. Restarting the dev server signs you out.
+// Signing key for session cookies: AUTH_SECRET if set, otherwise derived from DATABASE_URL (anyone who
+// can read that already has all the data), so a deploy needs only the database and AUTH_USERS.
+// In development with neither, a random key made at startup (kept across hot reloads) is used, so no
+// signing key is ever published in the source; restarting the dev server signs you out.
 const devKey = globalThis as unknown as { __myteamDevKey?: Uint8Array }
 
-function secretKey() {
+function secretKey(): Uint8Array | null {
   const s = process.env.AUTH_SECRET
-  if (!s) {
-    if (isProd()) throw new Error('AUTH_SECRET is not set')
-    devKey.__myteamDevKey ??= new Uint8Array(randomBytes(32))
-    return devKey.__myteamDevKey
-  }
-  return new TextEncoder().encode(s)
+  if (s) return new TextEncoder().encode(s)
+  const dbUrl = process.env.DATABASE_URL
+  if (dbUrl) return new Uint8Array(createHash('sha256').update(`myteam-session-key\0${dbUrl}`).digest())
+  if (isProd()) return null
+  devKey.__myteamDevKey ??= new Uint8Array(randomBytes(32))
+  return devKey.__myteamDevKey
+}
+
+// Settings a production deploy still needs. The login page lists them instead of failing.
+export function missingSettings(): string[] {
+  if (!isProd()) return []
+  const missing: string[] = []
+  if (process.env.VERCEL && !process.env.DATABASE_URL) missing.push('DATABASE_URL')
+  if (!process.env.VERCEL && !process.env.AUTH_SECRET && !process.env.DATABASE_URL) missing.push('AUTH_SECRET')
+  if (!process.env.AUTH_USERS) missing.push('AUTH_USERS')
+  return missing
 }
 
 // AUTH_USERS="coach1@example.com:pass1,coach2@example.com:pass2". Passwords may contain ':' but not ','.
@@ -62,13 +74,19 @@ export async function upsertUser(email: string) {
   return user
 }
 
+function requireKey() {
+  const key = secretKey()
+  if (!key) throw new Error(`Missing settings: ${missingSettings().join(', ')}`)
+  return key
+}
+
 export async function startSession(user: { id: string; email: string }) {
   const token = await new SignJWT({ email: user.email, provider: 'password' })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(user.id)
     .setIssuedAt()
     .setExpirationTime(`${MAX_AGE_S}s`)
-    .sign(secretKey())
+    .sign(requireKey())
   const jar = await cookies()
   jar.set(COOKIE, token, {
     httpOnly: true,
@@ -88,9 +106,10 @@ export type Session = { userId: string; email: string }
 
 export const getSession = cache(async (): Promise<Session | null> => {
   const token = (await cookies()).get(COOKIE)?.value
-  if (!token) return null
+  const key = secretKey()
+  if (!token || !key) return null
   try {
-    const { payload } = await jwtVerify(token, secretKey(), { algorithms: ['HS256'] })
+    const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'] })
     if (!payload.sub || typeof payload.email !== 'string') return null
     // Removing a coach from AUTH_USERS signs them out on their next request.
     if (payload.provider === 'password' && !staticUsers().has(payload.email)) return null

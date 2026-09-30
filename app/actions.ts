@@ -3,7 +3,7 @@
 import { and, asc, eq, isNull, max } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { checkPassword, endSession, requireSession, startSession, upsertUser } from '@/lib/auth'
+import { checkPassword, endSession, missingSettings, requireSession, startSession, upsertUser } from '@/lib/auth'
 import { getOwnedTeam } from '@/lib/data'
 import { db, schema } from '@/lib/db'
 import { AGES, FORMATS, LIMITS, agePreset, cleanGroups, isAge, type FormatKey } from '@/lib/formats'
@@ -33,6 +33,7 @@ function refreshTeam(teamId: string) {
 export async function login(_: FormState, fd: FormData): Promise<FormState> {
   const email = str(fd, 'email').toLowerCase()
   const password = typeof fd.get('password') === 'string' ? (fd.get('password') as string) : ''
+  if (missingSettings().length) return { error: 'This site isn’t set up yet. See the list above.' }
   if (!email || !password) return { error: 'Enter your email and password.' }
   if (!checkPassword(email, password)) return { error: 'That email and password don’t match.' }
   const user = await upsertUser(email)
