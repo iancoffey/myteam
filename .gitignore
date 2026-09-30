@@ -1,0 +1,21 @@
+# dependencies and build output
+node_modules
+.next
+out
+*.tsbuildinfo
+next-env.d.ts
+
+# local database
+.data
+
+# secrets: every .env file except the documented example
+.env*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# local tool state
+.vercel
+*.log
+.DS_Store
