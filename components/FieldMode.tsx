@@ -716,7 +716,7 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
           <span className="countdown">{keeper ? `Keeper: ${keeper.name}` : ''}</span>
         </div>
         <p>
-          Tap two players to switch them{S.keeper ? ', or one field player to put them in goal' : ''}. Tap the clock at
+          Tap two players to switch them{S.keeper ? ', or one field player to put them in goal' : ''}. Press Start at
           kickoff. Not keeping time? Tap {endPeriodLabel(S.periods, 1)} at the whistle.
         </p>
         <div className="btn-grid">
@@ -787,11 +787,6 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
         ) : (
           !g.over && <p>No one on the bench. Everyone plays.</p>
         )}
-        {g.over && (
-          <button className="ghost-btn" onClick={startNextPeriod}>
-            Start {periodName(S.periods, g.period + 1)}
-          </button>
-        )}
       </>
     )
   }
@@ -813,21 +808,13 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
       </header>
 
       <div className="clock-wrap">
-        <button className={`clock${g.running ? ' running' : ''}`} onClick={toggleClock} aria-label="Start or pause the clock">
+        <div className={`clock${g.running ? ' running' : ''}`} role="timer" aria-label={`${periodName(S.periods, g.period)}, ${mmss(periodMs - g.elapsed)} left`}>
           <span className="period">
             {g.final ? 'Full time' : g.over ? `End of ${periodName(S.periods, g.period)}` : periodName(S.periods, g.period)}
           </span>
           <span className="time">{mmss(periodMs - g.elapsed)}</span>
           <span className={`state${!g.running && !g.final ? ' paused' : ''}`}>
-            {g.final
-              ? 'Game over'
-              : g.over
-                ? `Tap at ${periodName(S.periods, g.period + 1)} kickoff`
-                : g.running
-                  ? 'Tap to pause'
-                  : pre
-                    ? 'Tap to kick off'
-                    : 'Paused · tap to resume'}
+            {g.final ? 'Game over' : g.over ? 'Break' : g.running ? 'Running' : pre ? 'Ready' : 'Paused'}
           </span>
           <span className="clock-bar" aria-hidden="true">
             <i style={{ width: `${Math.min(100, (g.elapsed / periodMs) * 100)}%` }} />
@@ -835,7 +822,18 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
               <b key={m} className={i < g.marksDone ? 'done' : undefined} style={{ left: `${(m / periodMs) * 100}%` }} />
             ))}
           </span>
-        </button>
+        </div>
+        {!g.final && (
+          <button className={`start-btn${g.running ? ' pause' : ''}`} onClick={toggleClock}>
+            {g.running
+              ? 'Pause'
+              : g.over
+                ? `Start ${periodName(S.periods, g.period + 1)}`
+                : pre
+                  ? `Start ${periodName(S.periods, 1)}`
+                  : 'Resume'}
+          </button>
+        )}
         {!g.final && (
           <div className="clock-strip">
             {inPeriod && (
