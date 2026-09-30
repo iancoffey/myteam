@@ -33,7 +33,11 @@ function refreshTeam(teamId: string) {
 export async function login(_: FormState, fd: FormData): Promise<FormState> {
   const email = str(fd, 'email').toLowerCase()
   const password = typeof fd.get('password') === 'string' ? (fd.get('password') as string) : ''
-  if (missingSettings().length) return { error: 'This site isn’t set up yet. See the list above.' }
+  const missing = missingSettings()
+  if (missing.length) {
+    console.error(`[myteam] sign-in unavailable, missing settings: ${missing.join(', ')}`)
+    return { error: 'Sign-in isn’t available right now. Please try again later.' }
+  }
   if (!email || !password) return { error: 'Enter your email and password.' }
   if (!checkPassword(email, password)) return { error: 'That email and password don’t match.' }
   const user = await upsertUser(email)
@@ -314,7 +318,7 @@ export async function saveGame(input: {
     eventId = ev?.id ?? null
   }
   const clientId = String(input.clientId ?? '').slice(0, 64)
-  if (!clientId) return { ok: false, error: 'Missing game id.' }
+  if (!clientId) return { ok: false, error: 'Couldn’t save this game. Please try again.' }
   await d
     .insert(games)
     .values({
