@@ -1,27 +1,26 @@
 import Link from 'next/link'
-import { MessageButtons } from '@/components/MessageButtons'
-import { getOwnedTeam, listGames, listGuardians, listPlayers, listUpcomingEvents, seasonMinutes } from '@/lib/data'
-import { cleanGroups, formatLabel, settingsLine, type FormatKey } from '@/lib/formats'
-import { eventMessage } from '@/lib/messages'
-import { formatDay, formatTime } from '@/lib/time'
+import { SessionCard } from '@/components/SessionCard'
+import { StartButtons } from '@/components/StartButtons'
+import { getCoachTeam, getLive, listCoaches, listGames, listPlayers, seasonMinutes, teamRules, teamSettings } from '@/lib/data'
+import { cleanGroups, formatLabel, settingsLine } from '@/lib/formats'
+import { kickedOff } from '@/lib/live'
+import { liveSummary } from '@/lib/summary'
+import { formatDay } from '@/lib/time'
 
 export default async function TeamPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const t = await getOwnedTeam(id)
-  const [kids, parents, upcoming, season, recent] = await Promise.all([
+  const { team: t } = await getCoachTeam(id)
+  const [kids, season, recent, row, coaches] = await Promise.all([
     listPlayers(t.id),
-    listGuardians(t.id),
-    listUpcomingEvents(t.id),
     seasonMinutes(t.id),
     listGames(t.id, 5),
+    getLive(t.id),
+    listCoaches(t),
   ])
+  const settings = teamSettings(t)
   const groups = cleanGroups(t.groups)
-  const settings = { format: t.format as FormatKey, onField: t.onField, keeper: t.keeper, periods: t.periods, periodMin: t.periodMin, subMin: t.subMin }
-  const next = upcoming[0]
-  const phones = [...new Set(parents.map((p) => p.phone).filter((p): p is string => !!p))]
-  const emails = [...new Set(parents.map((p) => p.email).filter((e): e is string => !!e))]
-  const kidName = new Map(kids.map((k) => [k.id, k.firstName]))
   const maxMs = Math.max(1, ...kids.map((k) => season.ms[k.id] ?? 0))
+  const now = Date.now()
 
   return (
     <main className="page">
@@ -42,52 +41,37 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
         )}
       </div>
 
-      <Link href={`/teams/${t.id}/field`} className="btn primary big">Game day</Link>
-
-      {next ? (
-        <section className="card event">
-          <div className="event-when">
-            <span className="event-day">
-              {formatDay(next.startsAt, t.timeZone)} · {formatTime(next.startsAt, t.timeZone)}
-            </span>
-            <span className={`pill ${next.kind}`}>{next.kind}</span>
-          </div>
-          <div>
-            {next.kind === 'game' && next.opponent ? `vs ${next.opponent}` : next.kind === 'game' ? 'Game' : 'Practice'}
-            {next.location ? ` · ${next.location}` : ''}
-          </div>
-          {next.kind === 'game' && (
-            <div className="muted">
-              Snacks: {next.snackPlayerId && kidName.get(next.snackPlayerId) ? `${kidName.get(next.snackPlayerId)}’s family` : 'nobody yet'}
-            </div>
-          )}
-          <MessageButtons
-            phones={phones}
-            emails={emails}
-            subject={`${t.name}: ${next.kind} ${formatDay(next.startsAt, t.timeZone)}`}
-            body={eventMessage(t, next, next.snackPlayerId ? kidName.get(next.snackPlayerId) : undefined)}
-          />
-        </section>
+      {row ? (
+        <SessionCard
+          teamId={t.id}
+          sessionId={row.id}
+          kind={row.kind === 'practice' ? 'practice' : 'game'}
+          summary={liveSummary(row.state, teamRules(t), now)}
+          canSave={kickedOff(row.state)}
+        />
       ) : (
-        <section className="card">
-          <p style={{ margin: 0 }}>Nothing scheduled yet.</p>
-        </section>
+        <StartButtons teamId={t.id} />
       )}
 
       <div className="stack">
-        <Link href={`/teams/${t.id}/schedule`} className="link-row">
-          <span>Schedule &amp; snacks<span className="sub">{upcoming.length} upcoming</span></span>
+        <Link href={`/teams/${t.id}/roster`} className="link-row">
+          <span>Roster<span className="sub">{kids.length} {kids.length === 1 ? 'kid' : 'kids'}</span></span>
           <span>→</span>
         </Link>
-        <Link href={`/teams/${t.id}/roster`} className="link-row">
-          <span>Roster &amp; parents<span className="sub">{kids.length} {kids.length === 1 ? 'kid' : 'kids'} · {parents.length} {parents.length === 1 ? 'parent' : 'parents'}</span></span>
+        <Link href={`/teams/${t.id}/coaches`} className="link-row">
+          <span>
+            Coaches
+            <span className="sub">
+              {1 + coaches.assistants.length} {coaches.assistants.length ? 'coaches' : 'coach'} · lineups and subs sync live
+            </span>
+          </span>
           <span>→</span>
         </Link>
       </div>
 
       <h2 className="h2">Season minutes · {season.games} {season.games === 1 ? 'game' : 'games'}</h2>
       {season.games === 0 ? (
-        <p className="note">Minutes show up here after you save your first game from Game day.</p>
+        <p className="note">Minutes show up here after your first saved game.</p>
       ) : (
         <div className="card" style={{ overflowX: 'auto' }}>
           <table className="minutes-table">
@@ -118,7 +102,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
             {recent.map((gm) => (
               <Link key={gm.id} href={`/teams/${t.id}/games/${gm.id}`} className="link-row">
                 <span>
-                  Us {gm.us} – {gm.them} {gm.opponent ?? 'Them'}
+                  Us {gm.us} – {gm.them} Them
                   <span className="sub">{formatDay(gm.playedAt, t.timeZone)} · subs by period</span>
                 </span>
                 <span>→</span>
@@ -127,9 +111,6 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
           </div>
         </>
       )}
-
-      <h2 className="h2">Message all parents</h2>
-      <MessageButtons phones={phones} emails={emails} subject={t.name} body={`Hi ${t.name} parents, `} />
     </main>
   )
 }

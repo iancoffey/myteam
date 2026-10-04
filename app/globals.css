@@ -232,9 +232,6 @@ textarea { min-height: 120px; line-height: 1.5; resize: vertical; }
 .kid { display: grid; gap: 8px; }
 .kid-head { display: flex; align-items: center; gap: 8px; }
 .kid-name { flex: 1; font-weight: 700; font-size: 1.15rem; }
-.guardian { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--bg); }
-.guardian .who { flex: 1; min-width: 0; }
-.guardian .who span { display: block; color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; }
 details > summary { cursor: pointer; font-weight: 700; color: var(--turf); padding-block: 6px; list-style: none; }
 details > summary::-webkit-details-marker { display: none; }
 
@@ -263,6 +260,23 @@ details > summary::-webkit-details-marker { display: none; }
 }
 .field-app.checkin { grid-template-rows: auto auto 1fr auto; }
 .field-app.game { grid-template-rows: auto auto auto 1fr auto; }
+.field-app.practice { grid-template-rows: auto auto 1fr auto; }
+.sync {
+  flex: none;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--turf-soft);
+  color: var(--turf);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.sync.off { background: var(--whistle); color: var(--whistle-ink); }
+.clock-strip button.on { background: var(--bg); color: var(--ink); border-color: var(--bg); }
+.ghost-btn.danger { color: var(--danger); }
+.sheet .go-btn, .sheet .ghost-btn { width: 100%; }
 .f-top { display: flex; align-items: center; gap: 12px; }
 .f-title { flex: 1; margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 2rem; line-height: 1; text-transform: uppercase; letter-spacing: 0.02em; }
 .icon-btn {

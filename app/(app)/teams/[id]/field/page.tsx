@@ -1,30 +1,27 @@
 import type { Metadata } from 'next'
+import { redirect } from 'next/navigation'
 import { FieldMode } from '@/components/FieldMode'
-import { getOwnedTeam, listPlayers, listUpcomingEvents, seasonMinutes } from '@/lib/data'
-import { cleanGroups, type FormatKey } from '@/lib/formats'
+import { getCoachTeam, getLive, seasonMinutes, sessionKids, teamSettings } from '@/lib/data'
+import { toClient } from '@/lib/live-server'
 
 export const metadata: Metadata = { title: 'Game day · myteam' }
 
 export default async function FieldPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const t = await getOwnedTeam(id)
-  const [kids, upcoming, season] = await Promise.all([listPlayers(t.id), listUpcomingEvents(t.id), seasonMinutes(t.id)])
-  // Link the game to today's scheduled game if it starts within the next 12 hours (or started in the last 3).
-  const groups = cleanGroups(t.groups)
-  const groupIds = new Set(groups.map((g) => g.id))
-  const soon = upcoming.find((e) => e.kind === 'game' && e.startsAt.getTime() < Date.now() + 12 * 60 * 60 * 1000)
-
+  const { team: t } = await getCoachTeam(id)
+  const [row, { groups, kids }, season] = await Promise.all([getLive(t.id), sessionKids(t), seasonMinutes(t.id)])
+  // Nothing running: start one from the team page.
+  if (!row) redirect(`/teams/${t.id}`)
   return (
     <FieldMode
       teamId={t.id}
       teamName={t.name}
       age={t.age}
-      settings={{ format: t.format as FormatKey, onField: t.onField, keeper: t.keeper, periods: t.periods, periodMin: t.periodMin, subMin: t.subMin }}
+      settings={teamSettings(t)}
       groups={groups}
-      kids={kids.map((k) => ({ id: k.id, name: k.firstName, groups: k.groupIds.filter((id) => groupIds.has(id)) }))}
+      kids={kids}
       seasonMs={season.ms}
-      eventId={soon?.id ?? null}
-      opponent={soon?.opponent ?? null}
+      initial={{ session: toClient(row), now: Date.now() }}
     />
   )
 }

@@ -1,17 +1,16 @@
 'use server'
 
-import { and, asc, eq, isNull, max } from 'drizzle-orm'
+import { and, eq, max } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { checkPassword, endSession, missingSettings, requireSession, startSession, upsertUser } from '@/lib/auth'
-import { getOwnedTeam } from '@/lib/data'
+import { getCoachTeam, listCoaches } from '@/lib/data'
 import { db, schema } from '@/lib/db'
+import { normalizeEmail } from '@/lib/email'
 import { AGES, FORMATS, LIMITS, agePreset, cleanGroups, isAge, type FormatKey } from '@/lib/formats'
-import { cleanLog } from '@/lib/gamelog'
-import { normalizeEmail, normalizePhone } from '@/lib/phone'
-import { isValidTimeZone, zonedToDate } from '@/lib/time'
+import { isValidTimeZone } from '@/lib/time'
 
-const { teams, players, guardians, events, games } = schema
+const { teams, players, games, teamMembers } = schema
 
 export type FormState = { error?: string; ok?: string } | undefined
 
@@ -96,7 +95,7 @@ export async function createTeam(_: FormState, fd: FormData): Promise<FormState>
 }
 
 export async function updateTeam(_: FormState, fd: FormData): Promise<FormState> {
-  const team = await getOwnedTeam(str(fd, 'teamId'))
+  const { team } = await getCoachTeam(str(fd, 'teamId'))
   const t = parseTeam(fd)
   const d = await db()
   await d
@@ -108,11 +107,35 @@ export async function updateTeam(_: FormState, fd: FormData): Promise<FormState>
 }
 
 export async function deleteTeam(fd: FormData) {
-  const team = await getOwnedTeam(str(fd, 'teamId'))
+  const { team, isOwner } = await getCoachTeam(str(fd, 'teamId'))
+  if (!isOwner) return
   const d = await db()
   await d.delete(teams).where(eq(teams.id, team.id))
   revalidatePath('/')
   redirect('/')
+}
+
+// ---------- coaches ----------
+
+export async function addCoach(_: FormState, fd: FormData): Promise<FormState> {
+  const { team, isOwner } = await getCoachTeam(str(fd, 'teamId'))
+  if (!isOwner) return { error: 'Only the team’s owner can add coaches.' }
+  const email = normalizeEmail(str(fd, 'email'))
+  if (!email) return { error: 'Enter the email your assistant signs in with.' }
+  const { owner } = await listCoaches(team)
+  if (email === owner) return { error: 'That’s you. You already coach this team.' }
+  const d = await db()
+  await d.insert(teamMembers).values({ teamId: team.id, email }).onConflictDoNothing()
+  refreshTeam(team.id)
+  return { ok: `Added ${email}.` }
+}
+
+export async function removeCoach(fd: FormData) {
+  const { team, isOwner } = await getCoachTeam(str(fd, 'teamId'))
+  if (!isOwner) return
+  const d = await db()
+  await d.delete(teamMembers).where(and(eq(teamMembers.teamId, team.id), eq(teamMembers.email, str(fd, 'email').toLowerCase())))
+  refreshTeam(team.id)
 }
 
 // ---------- roster ----------
@@ -126,7 +149,7 @@ function parseNames(raw: string) {
 }
 
 export async function addPlayers(_: FormState, fd: FormData): Promise<FormState> {
-  const team = await getOwnedTeam(str(fd, 'teamId'))
+  const { team } = await getCoachTeam(str(fd, 'teamId'))
   const names = parseNames(str(fd, 'names'))
   if (!names.length) return { error: 'Type at least one first name.' }
   const d = await db()
@@ -138,7 +161,7 @@ export async function addPlayers(_: FormState, fd: FormData): Promise<FormState>
 }
 
 export async function renamePlayer(fd: FormData) {
-  const team = await getOwnedTeam(str(fd, 'teamId'))
+  const { team } = await getCoachTeam(str(fd, 'teamId'))
   const firstName = str(fd, 'firstName').slice(0, 40)
   if (!firstName) return
   const d = await db()
@@ -150,33 +173,10 @@ export async function renamePlayer(fd: FormData) {
 }
 
 export async function removePlayer(fd: FormData) {
-  const team = await getOwnedTeam(str(fd, 'teamId'))
+  const { team } = await getCoachTeam(str(fd, 'teamId'))
   const d = await db()
   await d.delete(players).where(and(eq(players.id, str(fd, 'playerId')), eq(players.teamId, team.id)))
   refreshTeam(team.id)
-}
-
-export async function addGuardian(_: FormState, fd: FormData): Promise<FormState> {
-  const team = await getOwnedTeam(str(fd, 'teamId'))
-  const playerId = str(fd, 'playerId')
-  const firstName = str(fd, 'firstName').slice(0, 40)
-  const phoneRaw = str(fd, 'phone')
-  const emailRaw = str(fd, 'email')
-  if (!firstName) return { error: 'Add the parent’s first name.' }
-  const phone = normalizePhone(phoneRaw)
-  if (phoneRaw && !phone) return { error: 'That phone number doesn’t look right. Use 10 digits, like 555-123-4567.' }
-  const email = normalizeEmail(emailRaw)
-  if (emailRaw && !email) return { error: 'That email doesn’t look right.' }
-  if (!phone && !email) return { error: 'Add a phone number or an email so you can reach them.' }
-  const d = await db()
-  const [kid] = await d
-    .select({ id: players.id })
-    .from(players)
-    .where(and(eq(players.id, playerId), eq(players.teamId, team.id)))
-  if (!kid) return { error: 'That player is no longer on this team.' }
-  await d.insert(guardians).values({ teamId: team.id, playerId, firstName, phone, email })
-  refreshTeam(team.id)
-  return { ok: `Added ${firstName}.` }
 }
 
 // Called straight from the roster's group chips, one tap per change.
@@ -185,7 +185,7 @@ export async function setPlayerGroups(input: {
   playerId: string
   groupIds: string[]
 }): Promise<{ ok: true } | { ok: false; error: string }> {
-  const team = await getOwnedTeam(input.teamId)
+  const { team } = await getCoachTeam(input.teamId)
   const valid = new Set(team.groups.map((g) => g.id))
   const groupIds = [...new Set((input.groupIds ?? []).filter((id) => typeof id === 'string' && valid.has(id)))]
   const d = await db()
@@ -199,141 +199,12 @@ export async function setPlayerGroups(input: {
   return { ok: true }
 }
 
+// ---------- saved games ----------
+
 export async function deleteGame(fd: FormData) {
-  const team = await getOwnedTeam(str(fd, 'teamId'))
+  const { team } = await getCoachTeam(str(fd, 'teamId'))
   const d = await db()
   await d.delete(games).where(and(eq(games.id, str(fd, 'gameId')), eq(games.teamId, team.id)))
   refreshTeam(team.id)
   redirect(`/teams/${team.id}`)
 }
-
-export async function removeGuardian(fd: FormData) {
-  const team = await getOwnedTeam(str(fd, 'teamId'))
-  const d = await db()
-  await d.delete(guardians).where(and(eq(guardians.id, str(fd, 'guardianId')), eq(guardians.teamId, team.id)))
-  refreshTeam(team.id)
-}
-
-// ---------- schedule ----------
-
-export async function createEvent(_: FormState, fd: FormData): Promise<FormState> {
-  const team = await getOwnedTeam(str(fd, 'teamId'))
-  const kind = str(fd, 'kind') === 'practice' ? 'practice' : 'game'
-  const startsAt = zonedToDate(str(fd, 'date'), str(fd, 'time'), team.timeZone)
-  if (!startsAt) return { error: 'Pick a date and a start time.' }
-  const d = await db()
-  await d.insert(events).values({
-    teamId: team.id,
-    kind,
-    startsAt,
-    location: str(fd, 'location').slice(0, 80) || null,
-    opponent: kind === 'game' ? str(fd, 'opponent').slice(0, 60) || null : null,
-  })
-  refreshTeam(team.id)
-  return { ok: kind === 'game' ? 'Game added.' : 'Practice added.' }
-}
-
-export async function deleteEvent(fd: FormData) {
-  const team = await getOwnedTeam(str(fd, 'teamId'))
-  const d = await db()
-  await d.delete(events).where(and(eq(events.id, str(fd, 'eventId')), eq(events.teamId, team.id)))
-  refreshTeam(team.id)
-}
-
-export async function setSnack(fd: FormData) {
-  const team = await getOwnedTeam(str(fd, 'teamId'))
-  const playerId = str(fd, 'playerId')
-  const d = await db()
-  let snackPlayerId: string | null = null
-  if (playerId) {
-    const [kid] = await d
-      .select({ id: players.id })
-      .from(players)
-      .where(and(eq(players.id, playerId), eq(players.teamId, team.id)))
-    snackPlayerId = kid?.id ?? null
-  }
-  await d
-    .update(events)
-    .set({ snackPlayerId })
-    .where(and(eq(events.id, str(fd, 'eventId')), eq(events.teamId, team.id)))
-  refreshTeam(team.id)
-}
-
-// Give every upcoming game without snacks to the family that has brought them least, in roster order.
-export async function fillSnackRotation(fd: FormData) {
-  const team = await getOwnedTeam(str(fd, 'teamId'))
-  const d = await db()
-  const kids = await d
-    .select({ id: players.id })
-    .from(players)
-    .where(eq(players.teamId, team.id))
-    .orderBy(asc(players.sort), asc(players.createdAt))
-  if (!kids.length) return
-  const all = await d
-    .select({ id: events.id, snack: events.snackPlayerId, startsAt: events.startsAt })
-    .from(events)
-    .where(and(eq(events.teamId, team.id), eq(events.kind, 'game')))
-    .orderBy(asc(events.startsAt))
-  const count = new Map(kids.map((k) => [k.id, 0]))
-  for (const e of all) if (e.snack && count.has(e.snack)) count.set(e.snack, count.get(e.snack)! + 1)
-  const now = Date.now()
-  const open = all.filter((e) => !e.snack && e.startsAt.getTime() > now)
-  for (const e of open) {
-    let pick = kids[0].id
-    for (const k of kids) if (count.get(k.id)! < count.get(pick)!) pick = k.id
-    count.set(pick, count.get(pick)! + 1)
-    await d
-      .update(events)
-      .set({ snackPlayerId: pick })
-      .where(and(eq(events.id, e.id), eq(events.teamId, team.id), isNull(events.snackPlayerId)))
-  }
-  refreshTeam(team.id)
-}
-
-// ---------- field mode ----------
-
-export async function saveGame(input: {
-  teamId: string
-  clientId: string
-  eventId?: string | null
-  us: number
-  them: number
-  minutes: Record<string, number>
-  log?: unknown
-}): Promise<{ ok: true } | { ok: false; error: string }> {
-  const team = await getOwnedTeam(input.teamId)
-  const d = await db()
-  const kids = await d.select({ id: players.id }).from(players).where(eq(players.teamId, team.id))
-  const valid = new Set(kids.map((k) => k.id))
-  const minutes: Record<string, number> = {}
-  for (const [id, ms] of Object.entries(input.minutes ?? {})) {
-    if (valid.has(id) && Number.isFinite(ms) && ms >= 0) minutes[id] = Math.min(Math.round(ms), 4 * 60 * 60 * 1000)
-  }
-  let eventId: string | null = null
-  if (input.eventId) {
-    const [ev] = await d
-      .select({ id: events.id })
-      .from(events)
-      .where(and(eq(events.id, input.eventId), eq(events.teamId, team.id)))
-    eventId = ev?.id ?? null
-  }
-  const clientId = String(input.clientId ?? '').slice(0, 64)
-  if (!clientId) return { ok: false, error: 'Couldn’t save this game. Please try again.' }
-  await d
-    .insert(games)
-    .values({
-      teamId: team.id,
-      eventId,
-      clientId,
-      us: Math.max(0, Math.min(99, input.us | 0)),
-      them: Math.max(0, Math.min(99, input.them | 0)),
-      minutes,
-      log: cleanLog(input.log, valid, team.periods, team.periodMin * 60 * 1000),
-      periods: team.periods,
-      periodMin: team.periodMin,
-    })
-    .onConflictDoNothing({ target: games.clientId })
-  refreshTeam(team.id)
-  return { ok: true }
-}
-

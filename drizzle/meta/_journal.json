@@ -22,6 +22,20 @@
       "when": 1790788818022,
       "tag": "0002_game_log",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791121519172,
+      "tag": "0003_remove_parents_schedule",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791121682050,
+      "tag": "0004_coaches_live_sessions",
+      "breakpoints": true
     }
   ]
 }

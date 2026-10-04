@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'myteam',
     short_name: 'myteam',
-    description: 'Check-in, lineups and fair substitutions for rec soccer coaches.',
+    description: 'Check-in, lineups, fair subs and a shared clock for rec soccer coaches.',
     start_url: '/',
     display: 'standalone',
     background_color: '#edf2ee',

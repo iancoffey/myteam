@@ -1,60 +1,25 @@
 'use client'
 
 import Link from 'next/link'
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
-import { saveGame } from '@/app/actions'
+import { useRouter } from 'next/navigation'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { GameLog } from '@/components/GameLog'
+import { useLive, type Initial } from '@/components/useLive'
+import { breakName, endPeriodLabel, formatLabel, periodName, type PositionGroup, type TeamSettings } from '@/lib/formats'
 import {
-  breakName,
-  endPeriodLabel,
-  formatLabel,
-  isKeeperGroup,
-  pairsPerSwap,
-  periodName,
-  type PositionGroup,
-  type TeamSettings,
-} from '@/lib/formats'
-import type { GameLogEntry } from '@/lib/gamelog'
-
-type Kid = { id: string; name: string; groups: string[] }
-type PState = { here: boolean; on: boolean; gk: boolean; ms: number }
-type ClockSnap = {
-  period: number
-  elapsed: number
-  running: boolean
-  over: boolean
-  final: boolean
-  at: number
-  ms: Record<string, number>
-}
-type Snap = {
-  label: string
-  flags: [string, boolean, boolean, boolean][]
-  us: number
-  them: number
-  marksDone: number
-  logLen: number
-  clock?: ClockSnap
-}
-type Game = {
-  v: 1
-  clientId: string
-  phase: 'checkin' | 'game'
-  p: Record<string, PState>
-  period: number
-  elapsed: number
-  running: boolean
-  lastTick: number
-  // How many of this period's swap marks have been handled (swapped or skipped).
-  marksDone: number
-  us: number
-  them: number
-  undo: Snap[]
-  log: GameLogEntry[]
-  over: boolean
-  final: boolean
-  saved: boolean
-}
+  DRILL_PRESETS_MIN,
+  MIN,
+  buildLineup,
+  inverseOf,
+  keeperGroupIds,
+  kickedOff,
+  subMarks,
+  suggestSwaps,
+  type Action,
+  type Kid,
+  type KidState,
+  type Rules,
+} from '@/lib/live'
 
 type Props = {
   teamId: string
@@ -64,96 +29,58 @@ type Props = {
   groups: PositionGroup[]
   kids: Kid[]
   seasonMs: Record<string, number>
-  eventId: string | null
-  opponent: string | null
+  initial: Initial
 }
 
-const M = 60000
-// A swap made up to a minute before a swap mark counts as that mark's swap.
-const EARLY_SWAP_MS = 60000
+const EMPTY: KidState = { here: false, on: false, gk: false, ms: 0 }
 
-function newId() {
-  try {
-    return crypto.randomUUID()
-  } catch {
-    return `g${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
-  }
-}
-function fresh(): Game {
-  return {
-    v: 1, clientId: newId(), phase: 'checkin', p: {}, period: 1, elapsed: 0, running: false, lastTick: 0,
-    marksDone: 0, us: 0, them: 0, undo: [], log: [], over: false, final: false, saved: false,
-  }
-}
-// Swap times within each period, e.g. 12-min quarters swapping every 6 min -> [6:00].
-// Marks less than 2 minutes before the end are skipped; the break is a swap point anyway.
-function subMarks(periodMin: number, subMin: number) {
-  const out: number[] = []
-  if (!subMin) return out
-  for (let m = subMin; periodMin - m >= 2; m += subMin) out.push(m * M)
-  return out
-}
 function mmss(ms: number) {
   const t = Math.max(0, Math.ceil(ms / 1000))
   return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`
 }
-function mins(ms: number) {
-  return Math.floor(ms / M)
-}
-function shuffle<T>(a: T[]) {
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[a[i], a[j]] = [a[j], a[i]]
-  }
-  return a
-}
+const mins = (ms: number) => Math.floor(ms / MIN)
 
-export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, seasonMs, eventId, opponent }: Props) {
-  const key = `myteam.game.${teamId}`
-  const gRef = useRef<Game | null>(null)
-  const [, force] = useReducer((x: number) => x + 1, 0)
+export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, seasonMs, initial }: Props) {
+  const router = useRouter()
+  const rules: Rules = useMemo(
+    () => ({ periods: S.periods, periodMin: S.periodMin, subMin: S.subMin, keeper: S.keeper, onField: S.onField }),
+    [S.periods, S.periodMin, S.subMin, S.keeper, S.onField],
+  )
+  const roster = useMemo(() => new Set(kids.map((k) => k.id)), [kids])
+  const live = useLive(teamId, initial, rules, roster)
+  const [, tick] = useReducer((x: number) => x + 1, 0)
   const [selected, setSelected] = useState<string | null>(null)
+  const [sheet, setSheet] = useState<null | 'menu' | 'log'>(null)
   const [toastMsg, setToastMsg] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [discardArmed, setDiscardArmed] = useState(false)
-  const [showLog, setShowLog] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [armed, setArmed] = useState<null | 'discard'>(null)
+  const undoStack = useRef<{ label: string; inverse: Action[] }[]>([])
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const lastSave = useRef(0)
   const audio = useRef<AudioContext | null>(null)
   const wake = useRef<WakeLockSentinel | null>(null)
+  const prev = useRef<{ period: number; elapsed: number; over: boolean; drillDone: boolean } | null>(null)
 
-  const periodMs = S.periodMin * M
-  const marks = subMarks(S.periodMin, S.subMin)
-  const keeperGroupIds = new Set(groups.filter((g) => isKeeperGroup(g.name)).map((g) => g.id))
-  const fieldGroups = groups.filter((g) => !keeperGroupIds.has(g.id))
+  const st = live.state
+  const periodMs = S.periodMin * MIN
+  const marks = subMarks(rules)
+  const keeperIds = keeperGroupIds(groups)
+  const fieldGroups = groups.filter((g) => !keeperIds.has(g.id))
   const names = Object.fromEntries(kids.map((k) => [k.id, k.name]))
+  const ks = (id: string) => st?.kids[id] ?? EMPTY
 
-  // ---------- persistence ----------
-  const persist = useCallback(() => {
-    try {
-      localStorage.setItem(key, JSON.stringify(gRef.current))
-    } catch {}
-    lastSave.current = Date.now()
-  }, [key])
+  // Redraw four times a second so clocks move.
+  useEffect(() => {
+    const iv = setInterval(tick, 250)
+    return () => clearInterval(iv)
+  }, [])
 
   useEffect(() => {
-    // After a server refresh only the roster may have changed; keep the game in memory.
-    let g: Game | null = gRef.current
-    if (!g) {
-      try {
-        const raw = JSON.parse(localStorage.getItem(key) ?? 'null')
-        if (raw && raw.v === 1) g = raw as Game
-      } catch {}
-    }
-    g ??= fresh()
-    g.marksDone ??= 0
-    g.log ??= []
-    for (const k of kids) g.p[k.id] ??= { here: false, on: false, gk: false, ms: 0 }
-    gRef.current = g
-    force()
-  }, [key, kids])
+    if (!armed) return
+    const t = setTimeout(() => setArmed(null), 3000)
+    return () => clearTimeout(t)
+  }, [armed])
 
-  // ---------- feedback ----------
+  // ---------- feedback: buzz, beep, keep the screen on ----------
   function toast(msg: string) {
     setToastMsg(msg)
     clearTimeout(toastTimer.current)
@@ -162,13 +89,6 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
   function buzz(p: number | number[]) {
     try {
       navigator.vibrate?.(p)
-    } catch {}
-  }
-  function unlockAudio() {
-    if (audio.current) return
-    try {
-      const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-      audio.current = new Ctx()
     } catch {}
   }
   function beep() {
@@ -191,432 +111,318 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
       }
     } catch {}
   }
-  function requestWake() {
-    try {
-      navigator.wakeLock?.request('screen').then((l) => (wake.current = l)).catch(() => {})
-    } catch {}
-  }
-  function releaseWake() {
-    try {
-      wake.current?.release()
-    } catch {}
-    wake.current = null
-  }
-
-  // ---------- helpers over current state ----------
-  const g = gRef.current
-  const ps = (id: string) => gRef.current!.p[id]
-  const present = () => kids.filter((k) => ps(k.id).here)
-  const kickedOff = (x: Game) => x.period > 1 || x.elapsed > 0 || x.running
-  const groupNames = (k: Kid) => groups.filter((gr) => k.groups.includes(gr.id)).map((gr) => gr.name)
-  const sharesFieldGroup = (a: Kid, b: Kid) => a.groups.some((id) => !keeperGroupIds.has(id) && b.groups.includes(id))
-
-  // Fewest minutes come in; each replaces the most-played field player from a shared position group,
-  // or the most-played field player overall when nobody shares one. The keeper stays in.
-  function suggestion(): [Kid, Kid][] {
-    const bench = kids.filter((k) => ps(k.id).here && !ps(k.id).on).sort((a, b) => ps(a.id).ms - ps(b.id).ms)
-    const out = kids.filter((k) => ps(k.id).here && ps(k.id).on && !ps(k.id).gk).sort((a, b) => ps(b.id).ms - ps(a.id).ms)
-    const n = Math.min(pairsPerSwap(S.onField), bench.length, out.length)
-    const used = new Set<string>()
-    return bench.slice(0, n).map((inK) => {
-      const free = out.filter((k) => !used.has(k.id))
-      const outK = free.find((k) => sharesFieldGroup(inK, k)) ?? free[0]
-      used.add(outK.id)
-      return [inK, outK] as [Kid, Kid]
-    })
-  }
-
-  // ---------- clock ----------
-  const tick = useCallback(() => {
-    const x = gRef.current
-    if (!x || !x.running) return
-    const now = Date.now()
-    let dt = now - x.lastTick
-    x.lastTick = now
-    if (dt <= 0) return
-    const pm = S.periodMin * M
-    dt = Math.max(0, Math.min(dt, pm - x.elapsed))
-    const before = x.elapsed
-    x.elapsed += dt
-    for (const k of kids) if (x.p[k.id]?.here && x.p[k.id].on) x.p[k.id].ms += dt
-    const hasBench = kids.some((k) => x.p[k.id]?.here && !x.p[k.id].on)
-    if (hasBench && subMarks(S.periodMin, S.subMin).some((m) => before < m && x.elapsed >= m)) {
-      buzz([200, 100, 200])
-      beep()
-    }
-    if (x.elapsed >= pm) {
-      x.running = false
-      x.over = true
-      if (x.period >= S.periods) x.final = true
-      buzz([400, 150, 400])
-      beep()
-      releaseWake()
-      persist()
-    } else if (now - lastSave.current > 2000) {
-      persist()
-    }
-    force()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [S.periodMin, S.subMin, S.periods, kids, persist])
-
   useEffect(() => {
-    const iv = setInterval(tick, 250)
-    const onVis = () => {
-      if (document.visibilityState === 'visible') {
-        tick()
-        if (gRef.current?.running) requestWake()
-      } else persist()
+    const unlock = () => {
+      if (audio.current) return
+      try {
+        const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+        audio.current = new Ctx()
+      } catch {}
     }
-    document.addEventListener('visibilitychange', onVis)
-    document.addEventListener('pointerdown', unlockAudio)
-    return () => {
-      clearInterval(iv)
-      document.removeEventListener('visibilitychange', onVis)
-      document.removeEventListener('pointerdown', unlockAudio)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tick, persist])
+    document.addEventListener('pointerdown', unlock)
+    return () => document.removeEventListener('pointerdown', unlock)
+  }, [])
 
+  const running = !!st && (st.clock.running || st.drill.running)
   useEffect(() => {
-    if (!discardArmed) return
-    const t = setTimeout(() => setDiscardArmed(false), 3000)
-    return () => clearTimeout(t)
-  }, [discardArmed])
+    if (running) {
+      try {
+        navigator.wakeLock?.request('screen').then((l) => (wake.current = l)).catch(() => {})
+      } catch {}
+    } else {
+      try {
+        wake.current?.release()
+      } catch {}
+      wake.current = null
+    }
+  }, [running])
+
+  // Every coach's phone buzzes at swap marks, period ends and when a drill finishes.
+  useEffect(() => {
+    if (!st) return
+    const p = prev.current
+    const c = st.clock
+    const drillDone = st.drill.elapsed >= st.drill.length
+    if (p) {
+      const hasBench = kids.some((k) => ks(k.id).here && !ks(k.id).on)
+      if (st.kind === 'game' && c.period === p.period && hasBench && marks.some((m) => p.elapsed < m && c.elapsed >= m)) {
+        buzz([200, 100, 200])
+        beep()
+      }
+      if (st.kind === 'game' && !p.over && st.over) {
+        buzz([400, 150, 400])
+        beep()
+      }
+      if (st.kind === 'practice' && !p.drillDone && drillDone) {
+        buzz([400, 150, 400, 150, 400])
+        beep()
+      }
+    }
+    prev.current = { period: c.period, elapsed: c.elapsed, over: st.over, drillDone }
+  })
 
   // ---------- actions ----------
-  function commit() {
-    persist()
-    force()
-  }
-  // Where a log entry lands: swaps at a break count as the start of the next period.
-  function stamp(x: Game) {
-    return x.over && !x.final ? { p: x.period + 1, t: 0 } : { p: x.period, t: Math.round(x.elapsed) }
-  }
-  function act(label: string, fn: (x: Game) => void, withClock = false) {
-    tick()
-    const x = gRef.current!
-    const snap: Snap = {
-      label,
-      flags: kids.map((k) => [k.id, x.p[k.id].here, x.p[k.id].on, x.p[k.id].gk]),
-      us: x.us,
-      them: x.them,
-      marksDone: x.marksDone,
-      logLen: x.log.length,
-      clock: withClock
-        ? {
-            period: x.period, elapsed: x.elapsed, running: x.running, over: x.over, final: x.final, at: Date.now(),
-            ms: Object.fromEntries(kids.map((k) => [k.id, x.p[k.id].ms])),
-          }
-        : undefined,
+  function act(label: string, a: Action) {
+    if (!st) return
+    const inverse = inverseOf(st, a)
+    live.dispatch([a])
+    if (inverse.length) {
+      undoStack.current.push({ label, inverse })
+      if (undoStack.current.length > 25) undoStack.current.shift()
     }
-    fn(x)
-    x.undo.push(snap)
-    if (x.undo.length > 25) x.undo.shift()
     buzz(40)
     toast(label)
-    commit()
   }
   function undo() {
-    tick()
-    const x = gRef.current!
-    const s = x.undo.pop()
-    if (!s) return
-    for (const [id, here, on, gk] of s.flags) if (x.p[id]) Object.assign(x.p[id], { here, on, gk })
-    x.us = s.us
-    x.them = s.them
-    x.marksDone = s.marksDone ?? x.marksDone
-    if (typeof s.logLen === 'number') x.log.length = Math.min(x.log.length, s.logLen)
-    if (s.clock) {
-      const c = s.clock
-      for (const [id, ms] of Object.entries(c.ms)) if (x.p[id]) x.p[id].ms = ms
-      Object.assign(x, { period: c.period, elapsed: c.elapsed, over: c.over, final: c.final, running: c.running })
-      // If the clock was running, the time since the mistaken tap still counts.
-      if (c.running) {
-        x.lastTick = c.at
-        requestWake()
-      }
-    }
+    const u = undoStack.current.pop()
+    if (!u) return
+    live.dispatch(u.inverse)
     setSelected(null)
-    toast(`Undone: ${s.label}`)
-    commit()
-    if (s.clock?.running) tick()
-  }
-  function doSwaps(pairs: [Kid, Kid][], label: string) {
-    act(label, (x) => {
-      for (const [i, o] of pairs) {
-        x.p[i.id].on = true
-        x.p[o.id].on = false
-        if (x.p[o.id].gk) {
-          x.p[o.id].gk = false
-          x.p[i.id].gk = true
-        }
-        if (kickedOff(x)) x.log.push({ ...stamp(x), k: 'sub', in: i.id, out: o.id })
-      }
-      if (kickedOff(x) && !x.over) {
-        x.marksDone = Math.max(x.marksDone, marks.filter((m) => m <= x.elapsed + EARLY_SWAP_MS).length)
-      }
-    })
-  }
-  function skipMark() {
-    const x = gRef.current!
-    x.marksDone = Math.max(x.marksDone, marks.filter((m) => m <= x.elapsed).length)
-    toast('Skipped this swap')
-    commit()
+    toast(`Undone: ${u.label}`)
   }
   function makeLineup() {
-    const x = gRef.current!
-    // Fewest season minutes start (ties broken randomly).
-    const pool = shuffle(present()).sort((a, b) => (seasonMs[a.id] ?? 0) - (seasonMs[b.id] ?? 0))
-    for (const k of kids) Object.assign(x.p[k.id], { on: false, gk: false, ms: 0 })
-    const starters: Kid[] = []
-    const take = (k: Kid) => {
-      starters.push(k)
-      pool.splice(pool.indexOf(k), 1)
-    }
-    let keeper: Kid | undefined
-    if (S.keeper) {
-      keeper = pool.find((k) => k.groups.some((id) => keeperGroupIds.has(id)))
-      if (keeper) take(keeper)
-    }
-    // Fill spots round-robin across position groups so every group is covered.
-    for (let progress = true; progress && starters.length < S.onField; ) {
-      progress = false
-      for (const grp of fieldGroups) {
-        if (starters.length >= S.onField) break
-        const k = pool.find((kid) => kid.groups.includes(grp.id))
-        if (k) {
-          take(k)
-          progress = true
-        }
-      }
-    }
-    while (starters.length < S.onField && pool.length) take(pool[0])
-    for (const k of starters) x.p[k.id].on = true
-    if (S.keeper && starters.length) {
-      keeper ??= starters[Math.floor(Math.random() * starters.length)]
-      x.p[keeper.id].gk = true
-    }
+    if (!st) return
+    live.dispatch([{ t: 'lineup', ...buildLineup(st, kids, rules, groups, seasonMs) }])
+    undoStack.current = []
+    setSelected(null)
   }
-  function toggleClock() {
-    const x = gRef.current!
-    if (x.final) return
-    // During a break, tapping the clock kicks off the next period.
-    if (x.over) return startNextPeriod()
-    if (x.running) {
-      tick()
-      x.running = false
-      releaseWake()
-    } else {
-      x.running = true
-      x.lastTick = Date.now()
-      requestWake()
-    }
-    commit()
-  }
-  // Ends the current period, or, during a break, the next one without its clock ever running.
-  function endPeriod() {
-    const x = gRef.current!
-    if (x.final) return
-    act(
-      endPeriodLabel(S.periods, x.over ? x.period + 1 : x.period),
-      (y) => {
-        if (y.over) {
-          y.period += 1
-          y.elapsed = 0
-          y.marksDone = 0
-          y.over = false
-        }
-        if (y.elapsed === 0 && !y.running) {
-          // The clock wasn't used this period (the ref kept time): count a full period for kids on the field.
-          for (const k of kids) if (y.p[k.id].here && y.p[k.id].on) y.p[k.id].ms += periodMs
-          y.elapsed = periodMs
-        }
-        y.running = false
-        y.over = true
-        if (y.period >= S.periods) y.final = true
-        releaseWake()
-      },
-      true,
-    )
-  }
-  // Nudge the clock to match the ref's; kids on the field gain or lose the same time.
-  function adjust(delta: number) {
-    tick()
-    const x = gRef.current!
-    if (x.over || x.final) return
-    const d = Math.max(-x.elapsed, Math.min(delta, periodMs - x.elapsed))
-    if (!d) return
-    x.elapsed += d
-    for (const k of kids) if (x.p[k.id].here && x.p[k.id].on) x.p[k.id].ms = Math.max(0, x.p[k.id].ms + d)
-    toast(`Clock ${d > 0 ? '+' : '−'}${mmss(Math.abs(d))}`)
-    commit()
-  }
-  function startNextPeriod() {
-    const x = gRef.current!
-    x.period += 1
-    x.elapsed = 0
-    x.marksDone = 0
-    x.over = false
-    x.running = true
-    x.lastTick = Date.now()
-    requestWake()
-    commit()
+  function swap(pairs: [Kid, Kid][]) {
+    const label = pairs.length === 1 ? `${pairs[0][0].name} in for ${pairs[0][1].name}` : `${pairs.length} players swapped`
+    act(label, { t: 'swap', pairs: pairs.map(([i, o]) => [i.id, o.id] as [string, string]) })
   }
   function tapPlayer(id: string) {
-    const p = ps(id)
+    const p = ks(id)
     const kid = kids.find((k) => k.id === id)!
     if (!p.here) {
       setSelected(null)
-      act(`${kid.name} is here`, (x) => {
-        Object.assign(x.p[id], { here: true, on: false, gk: false })
-        if (kickedOff(x)) x.log.push({ ...stamp(x), k: 'arrive', id })
-      })
+      act(`${kid.name} is here`, { t: 'here', id, here: true })
       return
     }
     if (selected === null || selected === id) {
       setSelected(selected === id ? null : id)
       return
     }
-    const a = ps(selected)
-    if (!a || !a.here || a.on === p.on) {
+    const a = ks(selected)
+    if (!a.here || a.on === p.on) {
       setSelected(id)
       return
     }
-    const aKid = kids.find((k) => k.id === selected)!
-    const [inK, outK] = a.on ? [kid, aKid] : [aKid, kid]
+    const other = kids.find((k) => k.id === selected)!
     setSelected(null)
-    doSwaps([[inK, outK]], `${inK.name} in for ${outK.name}`)
+    swap(a.on ? [[kid, other]] : [[other, kid]])
   }
-  function goal(side: 'us' | 'them') {
-    act(side === 'us' ? 'Goal for us' : `Goal for ${opponent ?? 'them'}`, (x) => {
-      x[side] += 1
-      if (kickedOff(x)) x.log.push({ ...stamp(x), k: 'goal', side })
-    })
-  }
-  async function save() {
-    const x = gRef.current!
-    if (x.saved || saving) return
-    setSaving(true)
-    const minutes: Record<string, number> = {}
-    for (const k of kids) if (x.p[k.id].here) minutes[k.id] = x.p[k.id].ms
-    try {
-      const res = await saveGame({ teamId, clientId: x.clientId, eventId, us: x.us, them: x.them, minutes, log: x.log })
-      if (res.ok) {
-        x.saved = true
-        toast('Game saved')
-        commit()
-      } else toast(res.error)
-    } catch {
-      toast('No signal. The game is kept on this phone. Tap Save again later.')
-    } finally {
-      setSaving(false)
-    }
-  }
-  function newGame() {
-    const x = gRef.current!
-    if (x.final && !x.saved && !discardArmed) {
-      setDiscardArmed(true)
+  async function endSession(op: 'finish' | 'discard') {
+    setBusy(true)
+    const ok = await live.end(op)
+    setBusy(false)
+    if (!ok) {
+      toast('No signal. Try again when you’re back online.')
       return
     }
-    releaseWake()
-    const next = fresh()
-    for (const k of kids) next.p[k.id] = { here: false, on: false, gk: false, ms: 0 }
-    gRef.current = next
-    setSelected(null)
-    setDiscardArmed(false)
-    setShowLog(false)
-    commit()
+    router.push(`/teams/${teamId}`)
+    router.refresh()
   }
 
-  // Retry an unsaved finished game as soon as the phone is back online.
-  useEffect(() => {
-    const onOnline = () => {
-      const x = gRef.current
-      if (x?.final && !x.saved) void save()
-    }
-    window.addEventListener('online', onOnline)
-    return () => window.removeEventListener('online', onOnline)
-  })
-
-  if (!g) return <main className="field-app checkin" aria-busy="true" />
-
+  // ---------- shared pieces ----------
   const toastEl = (
     <div className={`toast${toastMsg ? '' : ' off'}`} role="status">
       {toastMsg}
     </div>
   )
+  const sync = (
+    <span className={`sync${live.online ? '' : ' off'}`} title={live.online ? 'Up to date with your other coaches' : 'No signal'}>
+      {live.online ? (live.waiting ? 'Saving…' : 'Live') : `Offline${live.waiting ? ` · ${live.waiting} waiting` : ''}`}
+    </span>
+  )
+  const topButtons = (
+    <>
+      <button className="icon-btn" onClick={() => setSheet('menu')} aria-label="Menu">⋯</button>
+      <Link href={`/teams/${teamId}`} className="icon-btn" aria-label="Back to team (keeps running)">✕</Link>
+    </>
+  )
+  const isGame = live.kind === 'game'
+  const off = !!st && kickedOff(st)
 
-  // ================= CHECK-IN =================
-  if (g.phase === 'checkin') {
-    const n = present().length
-    const allHere = kids.length > 0 && kids.every((k) => ps(k.id).here)
+  const menu = sheet === 'menu' && (
+    <div className="sheet-wrap" onClick={(e) => e.target === e.currentTarget && setSheet(null)}>
+      <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="menuTitle">
+        <div className="f-top">
+          <h2 id="menuTitle" className="f-title">{isGame ? 'Game' : 'Practice'}</h2>
+          <button className="icon-btn" onClick={() => setSheet(null)} aria-label="Close">✕</button>
+        </div>
+        {isGame && off && (
+          <button className="go-btn" disabled={busy} onClick={() => endSession('finish')}>
+            End game &amp; save
+          </button>
+        )}
+        {!isGame && (
+          <button className="go-btn" disabled={busy} onClick={() => endSession('finish')}>
+            End practice
+          </button>
+        )}
+        {isGame && st?.phase === 'live' && !off && (
+          <button
+            className="ghost-btn"
+            onClick={() => {
+              live.dispatch([{ t: 'toCheckin' }])
+              setSheet(null)
+            }}
+          >
+            Back to check-in
+          </button>
+        )}
+        {isGame && st?.phase === 'live' && (
+          <button className="ghost-btn" onClick={() => setSheet('log')}>
+            Game log
+          </button>
+        )}
+        <button
+          className="ghost-btn danger"
+          disabled={busy}
+          onClick={() => (armed === 'discard' ? endSession('discard') : setArmed('discard'))}
+        >
+          {armed === 'discard' ? 'Tap again to discard' : isGame ? 'Discard this game' : 'Discard this practice'}
+        </button>
+        <p className="note">
+          {isGame
+            ? 'Ending saves the score and everyone’s minutes. Discarding throws this game away for every coach.'
+            : 'Ending or discarding closes this practice for every coach.'}
+        </p>
+      </div>
+    </div>
+  )
+
+  if (live.ended || !st) {
+    return (
+      <main className="page" style={{ paddingTop: '10vh' }}>
+        <h1 className="h1">{isGame ? 'Game ended' : 'Practice ended'}</h1>
+        <p className="muted" style={{ margin: 0 }}>This session was ended, maybe by another coach.</p>
+        <Link href={`/teams/${teamId}`} className="btn primary big">Back to {teamName}</Link>
+      </main>
+    )
+  }
+
+  // ================= CHECK-IN (games and practices) =================
+  const checkInTiles = (
+    <div className="tiles">
+      {kids.map((k) => {
+        const here = ks(k.id).here
+        return (
+          <button
+            key={k.id}
+            className={`tile${here ? ' here' : ''}`}
+            aria-pressed={here}
+            onClick={() => {
+              live.dispatch([{ t: 'here', id: k.id, here: !here }])
+              buzz(20)
+            }}
+          >
+            <span className="t-name">{k.name}</span>
+            <span className="t-min">{here ? '✓' : ''}</span>
+            <span className="t-tag">{here ? 'Here' : 'Not here yet'}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+  const n = kids.filter((k) => ks(k.id).here).length
+  const allHere = kids.length > 0 && kids.every((k) => ks(k.id).here)
+  const checkInHeader = (
+    <div className="group-h">
+      <span>{isGame ? 'Tap each kid as they arrive' : `Here · ${n} of ${kids.length}`}</span>
+      <button className="btn small" onClick={() => live.dispatch([{ t: 'allHere', here: !allHere }])}>
+        {allHere ? 'Clear all' : 'Everyone’s here'}
+      </button>
+    </div>
+  )
+  const noKids = (
+    <p className="empty">
+      No kids on this team yet. <Link href={`/teams/${teamId}/roster`}>Add them on the Roster page.</Link>
+    </p>
+  )
+
+  // ================= PRACTICE =================
+  if (!isGame) {
+    const d = st.drill
+    const left = d.length - d.elapsed
+    const done = left <= 0
+    return (
+      <main className="field-app practice">
+        <header className="f-top">
+          <h1 className="f-title">Practice</h1>
+          {sync}
+          {topButtons}
+        </header>
+        <div className="clock-wrap">
+          <div className={`clock${d.running ? ' running' : ''}`} role="timer" aria-label={`Drill timer, ${mmss(left)} left`}>
+            <span className="period">Drill timer</span>
+            <span className="time">{mmss(left)}</span>
+            <span className={`state${!d.running ? ' paused' : ''}`}>
+              {done ? 'Time!' : d.running ? 'Running' : d.elapsed > 0 ? 'Paused' : 'Ready'}
+            </span>
+            <span className="clock-bar" aria-hidden="true">
+              <i style={{ width: `${Math.min(100, (d.elapsed / d.length) * 100)}%` }} />
+            </span>
+          </div>
+          <button
+            className={`start-btn${d.running ? ' pause' : ''}`}
+            onClick={() => live.dispatch([{ t: d.running ? 'drillPause' : 'drillStart' }])}
+          >
+            {d.running ? 'Pause' : done ? 'Start again' : d.elapsed > 0 ? 'Resume' : 'Start'}
+          </button>
+          <div className="clock-strip">
+            {DRILL_PRESETS_MIN.map((m) => (
+              <button
+                key={m}
+                aria-pressed={d.length === m * MIN}
+                className={d.length === m * MIN ? 'on' : undefined}
+                onClick={() => live.dispatch([{ t: 'drillSet', ms: m * MIN }])}
+              >
+                {m}′
+              </button>
+            ))}
+            <span className="spacer" />
+            <button className="end" onClick={() => live.dispatch([{ t: 'drillReset' }])}>Reset</button>
+          </div>
+        </div>
+        <div className="roster">
+          {checkInHeader}
+          {kids.length === 0 ? noKids : checkInTiles}
+        </div>
+        <div className="cta">
+          <button className="go-btn" disabled={busy} onClick={() => endSession('finish')}>
+            End practice
+          </button>
+        </div>
+        {menu}
+        {toastEl}
+      </main>
+    )
+  }
+
+  // ================= GAME: CHECK-IN =================
+  if (st.phase === 'checkin') {
     return (
       <main className="field-app checkin">
         <header className="f-top">
           <h1 className="f-title">Who’s here?</h1>
-          <Link href={`/teams/${teamId}`} className="icon-btn" aria-label="Back to team">✕</Link>
+          {sync}
+          {topButtons}
         </header>
         <div className="team-chip">
-          <span className="name">{teamName}{opponent ? ` vs ${opponent}` : ''}</span>
+          <span className="name">{teamName}</span>
           <span className="line">
             <span className="badge">{age}</span>
             <span className="badge">{formatLabel(S)}</span> {S.periods} × {S.periodMin} min
-            {marks.length ? ` · swaps at ${marks.map((m) => `${m / M}′`).join(', ')} + breaks` : ' · swaps at breaks'}
+            {marks.length ? ` · swaps at ${marks.map((m) => `${m / MIN}′`).join(', ')} + breaks` : ' · swaps at breaks'}
           </span>
         </div>
         <div className="roster">
-          <div className="group-h">
-            <span>Tap each kid as they arrive</span>
-            <button
-              className="btn small"
-              onClick={() => {
-                for (const k of kids) ps(k.id).here = !allHere
-                commit()
-              }}
-            >
-              {allHere ? 'Clear all' : 'Everyone’s here'}
-            </button>
-          </div>
-          {kids.length === 0 ? (
-            <p className="empty">
-              No kids on this team yet. <Link href={`/teams/${teamId}/roster`}>Add them on the Roster page.</Link>
-            </p>
-          ) : (
-            <div className="tiles">
-              {kids.map((k) => {
-                const here = ps(k.id).here
-                return (
-                  <button
-                    key={k.id}
-                    className={`tile${here ? ' here' : ''}`}
-                    aria-pressed={here}
-                    onClick={() => {
-                      ps(k.id).here = !here
-                      buzz(20)
-                      commit()
-                    }}
-                  >
-                    <span className="t-name">{k.name}</span>
-                    <span className="t-min">{here ? '✓' : ''}</span>
-                    <span className="t-tag">{here ? 'Here' : 'Not here yet'}</span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
+          {checkInHeader}
+          {kids.length === 0 ? noKids : checkInTiles}
         </div>
         <div className="cta">
-          <button
-            className="go-btn"
-            disabled={n === 0}
-            onClick={() => {
-              makeLineup()
-              g.phase = 'game'
-              g.undo = []
-              setSelected(null)
-              commit()
-            }}
-          >
+          <button className="go-btn" disabled={n === 0} onClick={makeLineup}>
             {n ? `Make lineup · ${n} here` : 'Make lineup'}
           </button>
           <p className="cta-note">
@@ -629,39 +435,41 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
                   : `${S.onField} start, ${n - S.onField} on the bench. Fewest season minutes start.`}
           </p>
         </div>
+        {menu}
         {toastEl}
       </main>
     )
   }
 
   // ================= GAME =================
-  const pre = !kickedOff(g)
-  const pairs = suggestion()
-  const nextMark = marks[g.marksDone]
-  const due = !pre && !g.over && !g.final && nextMark !== undefined && g.elapsed >= nextMark && pairs.length > 0
-  const hereKids = present()
-  const total = hereKids.reduce((s, k) => s + ps(k.id).ms, 0)
-  const maxMs = Math.max(1, ...hereKids.map((k) => ps(k.id).ms))
+  const c = st.clock
+  const pre = !off
+  const pairs = suggestSwaps(st, kids, rules, groups)
+  const nextMark = marks[st.marksDone]
+  const due = !pre && !st.over && !st.final && nextMark !== undefined && c.elapsed >= nextMark && pairs.length > 0
+  const hereKids = kids.filter((k) => ks(k.id).here)
+  const total = hereKids.reduce((s, k) => s + ks(k.id).ms, 0)
+  const maxMs = Math.max(1, ...hereKids.map((k) => ks(k.id).ms))
   const avg = hereKids.length ? total / hereKids.length : 0
   const sel = selected ? kids.find((k) => k.id === selected) : undefined
-  const selP = selected ? ps(selected) : undefined
-  const keeper = kids.find((k) => ps(k.id).here && ps(k.id).gk)
-  const onField = kids.filter((k) => ps(k.id).here && ps(k.id).on)
-  // Field players per position group; the keeper is in goal, so doesn't count toward Left/Center/etc.
-  const outfield = onField.filter((k) => !ps(k.id).gk)
+  const selP = selected ? ks(selected) : undefined
+  const keeper = kids.find((k) => ks(k.id).here && ks(k.id).gk)
+  const onField = kids.filter((k) => ks(k.id).here && ks(k.id).on)
+  const outfield = onField.filter((k) => !ks(k.id).gk)
   const coverage = fieldGroups.map((gr) => `${gr.name} ${outfield.filter((k) => k.groups.includes(gr.id)).length}`).join(' · ')
-  const inPeriod = !g.over && !g.final
+  const sharesFieldGroup = (a: Kid, b: Kid) => a.groups.some((id) => !keeperIds.has(id) && b.groups.includes(id))
+  const groupNames = (k: Kid) => groups.filter((gr) => k.groups.includes(gr.id)).map((gr) => gr.name)
 
   const tileGroups: { title: string; hint?: string; empty: string; list: Kid[] }[] = [
     { title: 'On field', hint: 'Tap two players to swap', empty: 'Nobody on the field.', list: onField },
-    { title: 'Bench', empty: 'Nobody on the bench.', list: kids.filter((k) => ps(k.id).here && !ps(k.id).on) },
-    { title: 'Not here', hint: 'Tap a late arrival', empty: 'Everyone showed up.', list: kids.filter((k) => !ps(k.id).here) },
+    { title: 'Bench', empty: 'Nobody on the bench.', list: kids.filter((k) => ks(k.id).here && !ks(k.id).on) },
+    { title: 'Not here', hint: 'Tap a late arrival', empty: 'Everyone showed up.', list: kids.filter((k) => !ks(k.id).here) },
   ]
 
   let call: React.ReactNode
   if (sel && selP) {
     const canKeep = S.keeper && selP.on && !selP.gk
-    const matches = fieldGroups.length > 0 && kids.some((k) => ps(k.id).here && ps(k.id).on !== selP.on && sharesFieldGroup(sel, k))
+    const matches = fieldGroups.length > 0 && kids.some((k) => ks(k.id).here && ks(k.id).on !== selP.on && sharesFieldGroup(sel, k))
     call = (
       <>
         <p>
@@ -674,11 +482,7 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
               className="ghost-btn"
               onClick={() => {
                 setSelected(null)
-                act(`${sel.name} in goal`, (x) => {
-                  for (const k of kids) x.p[k.id].gk = false
-                  x.p[sel.id].gk = true
-                  if (kickedOff(x)) x.log.push({ ...stamp(x), k: 'keeper', id: sel.id })
-                })
+                act(`${sel.name} in goal`, { t: 'keeper', id: sel.id })
               }}
             >
               Put in goal
@@ -690,21 +494,23 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
         </div>
       </>
     )
-  } else if (g.final) {
+  } else if (st.final) {
     call = (
       <>
         <div className="call-top">
           <span className="eyebrow">Full time</span>
-          <span className="countdown">Us {g.us} – {g.them} {opponent ?? 'Them'}</span>
+          <span className="countdown">Us {st.us} – {st.them} Them</span>
         </div>
-        {g.saved ? (
-          <p>Saved. Minutes are added to the season totals.</p>
-        ) : (
-          <button className="go-btn" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save game'}</button>
-        )}
+        <button className="go-btn" onClick={() => endSession('finish')} disabled={busy}>
+          {busy ? 'Saving…' : 'Save game'}
+        </button>
         <div className="btn-grid">
-          <button className="ghost-btn" onClick={() => setShowLog(true)}>Subs by {S.periods === 2 ? 'half' : S.periods === 4 ? 'quarter' : 'period'}</button>
-          <button className="ghost-btn" onClick={newGame}>{discardArmed ? 'Not saved. Tap again' : 'New game'}</button>
+          <button className="ghost-btn" onClick={() => setSheet('log')}>
+            Subs by {S.periods === 2 ? 'half' : S.periods === 4 ? 'quarter' : 'period'}
+          </button>
+          <button className="ghost-btn" onClick={() => (armed === 'discard' ? endSession('discard') : setArmed('discard'))}>
+            {armed === 'discard' ? 'Tap again to discard' : 'Discard'}
+          </button>
         </div>
       </>
     )
@@ -720,46 +526,17 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
           kickoff. Not keeping time? Tap {endPeriodLabel(S.periods, 1)} at the whistle.
         </p>
         <div className="btn-grid">
-          <button
-            className="ghost-btn"
-            onClick={() => {
-              makeLineup()
-              g.undo = []
-              setSelected(null)
-              toast('New lineup')
-              commit()
-            }}
-          >
-            Reshuffle
-          </button>
-          <button
-            className="ghost-btn"
-            onClick={() => {
-              g.phase = 'checkin'
-              g.running = false
-              setSelected(null)
-              commit()
-            }}
-          >
-            Back to check-in
-          </button>
+          <button className="ghost-btn" onClick={makeLineup}>Reshuffle</button>
+          <button className="ghost-btn" onClick={() => live.dispatch([{ t: 'toCheckin' }])}>Back to check-in</button>
         </div>
       </>
     )
   } else {
-    const countdown = !pairs.length
-      ? ''
-      : g.over
-        ? 'Swap now'
-        : due
-          ? 'Swap now'
-          : nextMark !== undefined
-            ? `in ${mmss(nextMark - g.elapsed)}`
-            : 'at the break'
+    const countdown = !pairs.length ? '' : st.over || due ? 'Swap now' : nextMark !== undefined ? `in ${mmss(nextMark - c.elapsed)}` : 'at the break'
     call = (
       <>
         <div className="call-top">
-          <span className="eyebrow">{g.over ? breakName(S.periods) : 'Next swap'}</span>
+          <span className="eyebrow">{st.over ? breakName(S.periods) : 'Next swap'}</span>
           <span className="countdown">{countdown}</span>
         </div>
         {pairs.length > 0 ? (
@@ -769,23 +546,20 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
               <span />
               <span className="h" style={{ textAlign: 'right' }}>Out</span>
               {pairs.map(([i, o]) => (
-                <PairRow key={i.id + o.id} inName={i.name} inMin={mins(ps(i.id).ms)} outName={o.name} outMin={mins(ps(o.id).ms)} />
+                <PairRow key={i.id + o.id} inName={i.name} inMin={mins(ks(i.id).ms)} outName={o.name} outMin={mins(ks(o.id).ms)} />
               ))}
             </div>
-            <button
-              className="go-btn"
-              onClick={() => doSwaps(pairs, pairs.length === 1 ? `${pairs[0][0].name} in for ${pairs[0][1].name}` : `${pairs.length} players swapped`)}
-            >
+            <button className="go-btn" onClick={() => swap(pairs)}>
               Swap{pairs.length > 1 ? ` ${pairs.length}` : ''}
             </button>
             {due && (
-              <button className="ghost-btn" onClick={skipMark}>
+              <button className="ghost-btn" onClick={() => live.dispatch([{ t: 'skipMark' }])}>
                 Skip this swap
               </button>
             )}
           </>
         ) : (
-          !g.over && <p>No one on the bench. Everyone plays.</p>
+          !st.over && <p>No one on the bench. Everyone plays.</p>
         )}
       </>
     )
@@ -796,55 +570,52 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
       <header className="f-top">
         <div className="score" aria-live="polite">
           <span>Us</span>
-          <span className="num">{g.us}</span>
+          <span className="num">{st.us}</span>
           <span className="num">–</span>
-          <span className="num">{g.them}</span>
-          <span className="opp">{opponent ?? 'Them'}</span>
+          <span className="num">{st.them}</span>
         </div>
-        <button className="icon-btn log-btn" onClick={() => setShowLog(true)} aria-label="Game log: subs by period">
-          Log
-        </button>
-        <Link href={`/teams/${teamId}`} className="icon-btn" aria-label="Back to team (the game keeps running)">✕</Link>
+        {sync}
+        {topButtons}
       </header>
 
       <div className="clock-wrap">
-        <div className={`clock${g.running ? ' running' : ''}`} role="timer" aria-label={`${periodName(S.periods, g.period)}, ${mmss(periodMs - g.elapsed)} left`}>
+        <div className={`clock${c.running ? ' running' : ''}`} role="timer" aria-label={`${periodName(S.periods, c.period)}, ${mmss(periodMs - c.elapsed)} left`}>
           <span className="period">
-            {g.final ? 'Full time' : g.over ? `End of ${periodName(S.periods, g.period)}` : periodName(S.periods, g.period)}
+            {st.final ? 'Full time' : st.over ? `End of ${periodName(S.periods, c.period)}` : periodName(S.periods, c.period)}
           </span>
-          <span className="time">{mmss(periodMs - g.elapsed)}</span>
-          <span className={`state${!g.running && !g.final ? ' paused' : ''}`}>
-            {g.final ? 'Game over' : g.over ? 'Break' : g.running ? 'Running' : pre ? 'Ready' : 'Paused'}
+          <span className="time">{mmss(periodMs - c.elapsed)}</span>
+          <span className={`state${!c.running && !st.final ? ' paused' : ''}`}>
+            {st.final ? 'Game over' : st.over ? 'Break' : c.running ? 'Running' : pre ? 'Ready' : 'Paused'}
           </span>
           <span className="clock-bar" aria-hidden="true">
-            <i style={{ width: `${Math.min(100, (g.elapsed / periodMs) * 100)}%` }} />
+            <i style={{ width: `${Math.min(100, (c.elapsed / periodMs) * 100)}%` }} />
             {marks.map((m, i) => (
-              <b key={m} className={i < g.marksDone ? 'done' : undefined} style={{ left: `${(m / periodMs) * 100}%` }} />
+              <b key={m} className={i < st.marksDone ? 'done' : undefined} style={{ left: `${(m / periodMs) * 100}%` }} />
             ))}
           </span>
         </div>
-        {!g.final && (
-          <button className={`start-btn${g.running ? ' pause' : ''}`} onClick={toggleClock}>
-            {g.running
+        {!st.final && (
+          <button className={`start-btn${c.running ? ' pause' : ''}`} onClick={() => live.dispatch([{ t: c.running ? 'pause' : 'start' }])}>
+            {c.running
               ? 'Pause'
-              : g.over
-                ? `Start ${periodName(S.periods, g.period + 1)}`
+              : st.over
+                ? `Start ${periodName(S.periods, c.period + 1)}`
                 : pre
                   ? `Start ${periodName(S.periods, 1)}`
                   : 'Resume'}
           </button>
         )}
-        {!g.final && (
+        {!st.final && (
           <div className="clock-strip">
-            {inPeriod && (
+            {!st.over && (
               <>
-                <button onClick={() => adjust(-M)} aria-label="Take a minute off the clock">−1′</button>
-                <button onClick={() => adjust(M)} aria-label="Add a minute to the clock">+1′</button>
+                <button onClick={() => live.dispatch([{ t: 'adjust', ms: -MIN }])} aria-label="Take a minute off the clock">−1′</button>
+                <button onClick={() => live.dispatch([{ t: 'adjust', ms: MIN }])} aria-label="Add a minute to the clock">+1′</button>
               </>
             )}
             <span className="spacer" />
-            <button className="end" onClick={endPeriod}>
-              {endPeriodLabel(S.periods, g.over ? g.period + 1 : g.period)}
+            <button className="end" onClick={() => act(endPeriodLabel(S.periods, st.over ? c.period + 1 : c.period), { t: 'endPeriod' })}>
+              {endPeriodLabel(S.periods, st.over ? c.period + 1 : c.period)}
             </button>
           </div>
         )}
@@ -867,8 +638,8 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
             ) : (
               <div className="tiles">
                 {grp.list.map((k) => {
-                  const p = ps(k.id)
-                  const owed = p.here && !p.on && avg > M && p.ms < avg - Math.max(M, avg * 0.2)
+                  const p = ks(k.id)
+                  const owed = p.here && !p.on && avg > MIN && p.ms < avg - Math.max(MIN, avg * 0.2)
                   const match = !!sel && !!selP && p.here && p.on !== selP.on && sharesFieldGroup(sel, k)
                   const cls = ['tile', p.here && p.on && 'on', !p.here && 'away', owed && 'owed', match && 'match', selected === k.id && 'selected']
                     .filter(Boolean)
@@ -896,22 +667,23 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
       </div>
 
       <nav className="thumbbar">
-        <button onClick={undo} disabled={!g.undo.length}>↶ Undo</button>
-        <button className="goal" onClick={() => goal('us')}>+ Us</button>
-        <button className="goal" onClick={() => goal('them')}>+ Them</button>
+        <button onClick={undo} disabled={!undoStack.current.length}>↶ Undo</button>
+        <button className="goal" onClick={() => act('Goal for us', { t: 'goal', side: 'us', d: 1 })}>+ Us</button>
+        <button className="goal" onClick={() => act('Goal for them', { t: 'goal', side: 'them', d: 1 })}>+ Them</button>
       </nav>
 
-      {showLog && (
-        <div className="sheet-wrap" onClick={(e) => e.target === e.currentTarget && setShowLog(false)}>
+      {sheet === 'log' && (
+        <div className="sheet-wrap" onClick={(e) => e.target === e.currentTarget && setSheet(null)}>
           <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="logTitle">
             <div className="f-top">
               <h2 id="logTitle" className="f-title">Game log</h2>
-              <button className="icon-btn" onClick={() => setShowLog(false)} aria-label="Close">✕</button>
+              <button className="icon-btn" onClick={() => setSheet(null)} aria-label="Close">✕</button>
             </div>
-            <GameLog log={g.log} periods={S.periods} periodMs={periodMs} names={names} opponent={opponent} />
+            <GameLog log={st.log} periods={S.periods} periodMs={periodMs} names={names} />
           </div>
         </div>
       )}
+      {menu}
       {toastEl}
     </main>
   )

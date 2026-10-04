@@ -1,7 +1,8 @@
 import { sql } from 'drizzle-orm'
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import type { PositionGroup } from '../formats'
 import type { GameLogEntry } from '../gamelog'
+import type { LiveState } from '../live'
 
 // Coaches. Only an email is stored; how they log in (static password now, Google later) lives outside this table.
 export const users = pgTable('users', {
@@ -29,7 +30,7 @@ export const teams = pgTable(
     subMin: integer('sub_min').notNull(),
     // Coach-defined position groups, e.g. Left/Center/Right/Goalie or Offense/Mids/Defense/Goalies.
     groups: jsonb('groups').$type<PositionGroup[]>().notNull().default(sql`'[]'::jsonb`),
-    // IANA zone captured from the coach's browser, used to show and enter event times.
+    // IANA zone captured from the coach's browser, used to show dates of saved games.
     timeZone: text('time_zone').notNull().default('America/New_York'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -53,44 +54,39 @@ export const players = pgTable(
   (t) => [index('players_team_idx').on(t.teamId)],
 )
 
-export const guardians = pgTable(
-  'guardians',
+// Assistant coaches, by the email they sign in with. They may not have signed in yet, so this
+// isn't keyed by user id. The team's owner is teams.ownerId and isn't listed here.
+export const teamMembers = pgTable(
+  'team_members',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    playerId: uuid('player_id')
-      .notNull()
-      .references(() => players.id, { onDelete: 'cascade' }),
     teamId: uuid('team_id')
       .notNull()
       .references(() => teams.id, { onDelete: 'cascade' }),
-    firstName: text('first_name').notNull(),
-    phone: text('phone'),
-    email: text('email'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    email: text('email').notNull(),
+    addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('guardians_team_idx').on(t.teamId)],
+  (t) => [primaryKey({ columns: [t.teamId, t.email] }), index('team_members_email_idx').on(t.email)],
 )
 
-export const events = pgTable(
-  'events',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    teamId: uuid('team_id')
-      .notNull()
-      .references(() => teams.id, { onDelete: 'cascade' }),
-    // 'game' | 'practice'
-    kind: text('kind').notNull(),
-    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
-    location: text('location'),
-    opponent: text('opponent'),
-    // The family bringing snacks, identified by their kid.
-    snackPlayerId: uuid('snack_player_id').references(() => players.id, { onDelete: 'set null' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index('events_team_starts_idx').on(t.teamId, t.startsAt)],
-)
+// The game or practice happening now, shared by every coach on the team. At most one per team;
+// the row is deleted when the session is finished (a game is then saved to games) or discarded.
+export const liveSessions = pgTable('live_sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  teamId: uuid('team_id')
+    .notNull()
+    .unique()
+    .references(() => teams.id, { onDelete: 'cascade' }),
+  // 'game' | 'practice'
+  kind: text('kind').notNull(),
+  state: jsonb('state').$type<LiveState>().notNull(),
+  // Bumped on every change; writes only succeed against the version they read.
+  version: integer('version').notNull().default(1),
+  createdBy: text('created_by').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
 
-// A finished game from field mode: score and each kid's minutes (playerId -> ms).
+// A finished game: score, each kid's minutes (playerId -> ms) and what happened when.
 export const games = pgTable(
   'games',
   {
@@ -98,8 +94,7 @@ export const games = pgTable(
     teamId: uuid('team_id')
       .notNull()
       .references(() => teams.id, { onDelete: 'cascade' }),
-    eventId: uuid('event_id').references(() => events.id, { onDelete: 'set null' }),
-    // Client-generated so a retried save after a dropped connection is not recorded twice.
+    // The live session's id, so finishing the same session twice records one game.
     clientId: text('client_id').notNull().unique(),
     us: integer('us').notNull(),
     them: integer('them').notNull(),
@@ -115,6 +110,5 @@ export const games = pgTable(
 
 export type Team = typeof teams.$inferSelect
 export type Player = typeof players.$inferSelect
-export type Guardian = typeof guardians.$inferSelect
-export type Event = typeof events.$inferSelect
 export type Game = typeof games.$inferSelect
+export type LiveSessionRow = typeof liveSessions.$inferSelect
