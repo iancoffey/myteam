@@ -9,6 +9,7 @@ export const MIN = 60_000
 // A swap made up to a minute before a swap mark counts as that mark's swap.
 export const EARLY_SWAP_MS = MIN
 export const DRILL_PRESETS_MIN = [5, 10, 15, 20]
+export const MAX_TEAMS = 3
 const MAX_LOG = 500
 
 export type Kind = 'game' | 'practice'
@@ -30,6 +31,8 @@ export type LiveState = {
   them: number
   log: GameLogEntry[]
   drill: Drill
+  // Practice scrimmage: kid ids per side. Late arrivals join the smaller side; kids who leave drop off.
+  teams?: string[][] | null
 }
 
 export type Action =
@@ -50,6 +53,9 @@ export type Action =
   | { t: 'drillStart' }
   | { t: 'drillPause' }
   | { t: 'drillReset' }
+  | { t: 'teams'; teams: string[][] }
+  | { t: 'moveKid'; id: string; to: number }
+  | { t: 'clearTeams' }
 
 // An action plus when the coach did it (their estimate of server time), so changes made with no
 // signal replay at the right moment once they reach the server.
@@ -74,6 +80,7 @@ export function newState(kind: Kind, kidIds: string[], now: number): LiveState {
     them: 0,
     log: [],
     drill: { length: 10 * MIN, elapsed: 0, running: false, at: now },
+    teams: null,
   }
 }
 
@@ -142,6 +149,26 @@ function unlog(st: LiveState, match: (e: GameLogEntry) => boolean) {
   }
 }
 
+function removeFromTeams(st: LiveState, id: string) {
+  for (const t of st.teams ?? []) {
+    const i = t.indexOf(id)
+    if (i >= 0) t.splice(i, 1)
+  }
+}
+
+// Keeps scrimmage sides in step with check-in: arrivals join the smaller side, leavers drop off.
+function syncTeams(st: LiveState, id: string) {
+  const teams = st.teams
+  if (!teams?.length) return
+  if (!st.kids[id]?.here) return removeFromTeams(st, id)
+  if (teams.some((t) => t.includes(id))) return
+  let small = 0
+  teams.forEach((t, i) => {
+    if (t.length < teams[small].length) small = i
+  })
+  teams[small].push(id)
+}
+
 function nextPeriod(st: LiveState) {
   st.clock.period += 1
   st.clock.elapsed = 0
@@ -167,6 +194,7 @@ export function apply(st: LiveState, a: Action, now: number, r: Rules, roster: S
       }
       if (a.undo) unlog(st, (e) => e.k === 'arrive' && e.id === a.id)
       else if (a.here && live && kickedOff(st)) log(st, { ...stamp(st), k: 'arrive', id: a.id })
+      syncTeams(st, a.id)
       return
     }
     case 'allHere': {
@@ -178,6 +206,8 @@ export function apply(st: LiveState, a: Action, now: number, r: Rules, roster: S
           k.gk = false
         }
       }
+      if (!a.here) st.teams = null
+      else for (const id of roster) syncTeams(st, id)
       return
     }
     case 'lineup': {
@@ -309,6 +339,31 @@ export function apply(st: LiveState, a: Action, now: number, r: Rules, roster: S
       st.drill.running = false
       return
     }
+    case 'teams': {
+      if (st.kind !== 'practice') return
+      const seen = new Set<string>()
+      const teams = a.teams.slice(0, MAX_TEAMS).map((t) =>
+        t.filter((id) => {
+          if (seen.has(id) || !roster.has(id) || !kid(st, id).here) return false
+          seen.add(id)
+          return true
+        }),
+      )
+      st.teams = teams.length >= 2 ? teams : null
+      for (const id of roster) syncTeams(st, id)
+      return
+    }
+    case 'moveKid': {
+      const to = Math.floor(a.to)
+      if (!st.teams || !roster.has(a.id) || !kid(st, a.id).here || to < 0 || to >= st.teams.length) return
+      removeFromTeams(st, a.id)
+      st.teams[to].push(a.id)
+      return
+    }
+    case 'clearTeams': {
+      st.teams = null
+      return
+    }
   }
 }
 
@@ -427,6 +482,36 @@ export function suggestSwaps(st: LiveState, kids: Kid[], r: Rules, groups: Posit
   })
 }
 
+// Splits the kids who are here into even scrimmage sides. Kids tagged Goalie go one per side first;
+// everyone else is dealt group by group (by their first position group) to whichever side is
+// smallest, so sizes differ by at most one and each position group spreads across the sides.
+export function splitTeams(st: LiveState, kids: Kid[], groups: PositionGroup[], count = 2, rand: () => number = Math.random): string[][] {
+  const n = Math.max(2, Math.min(MAX_TEAMS, Math.floor(count)))
+  const keeperIds = keeperGroupIds(groups)
+  const fieldGroups = groups.filter((g) => !keeperIds.has(g.id))
+  const here = shuffle(kids.filter((k) => st.kids[k.id]?.here), rand)
+  const teams: string[][] = Array.from({ length: n }, () => [])
+  let turn = Math.floor(rand() * n)
+  const deal = (id: string) => {
+    // the smallest side, taking turns among ties so no side always gets the extra kid
+    let pick = turn % n
+    for (let i = 0; i < n; i++) {
+      const j = (turn + i) % n
+      if (teams[j].length < teams[pick].length) pick = j
+    }
+    teams[pick].push(id)
+    turn = pick + 1
+  }
+  const keepers = here.filter((k) => k.groups.some((id) => keeperIds.has(id))).slice(0, n)
+  for (const k of keepers) deal(k.id)
+  const bucket = (k: Kid) => {
+    const i = fieldGroups.findIndex((g) => k.groups.includes(g.id))
+    return i < 0 ? fieldGroups.length : i
+  }
+  for (const k of here.filter((x) => !keepers.includes(x)).sort((a, b) => bucket(a) - bucket(b))) deal(k.id)
+  return teams
+}
+
 // ---------- validating actions from the network ----------
 
 const isId = (x: unknown): x is string => typeof x === 'string' && x.length > 0 && x.length <= 64
@@ -465,6 +550,15 @@ export function parseAction(x: unknown): Action | null {
       return isNum(a.ms) && Math.abs(a.ms) <= 10 * MIN ? { t: 'adjust', ms: a.ms } : null
     case 'drillSet':
       return isNum(a.ms) ? { t: 'drillSet', ms: a.ms } : null
+    case 'teams':
+      return Array.isArray(a.teams) &&
+        a.teams.length >= 2 &&
+        a.teams.length <= MAX_TEAMS &&
+        a.teams.every((t) => Array.isArray(t) && t.length <= 40 && t.every(isId))
+        ? { t: 'teams', teams: a.teams as string[][] }
+        : null
+    case 'moveKid':
+      return isId(a.id) && isNum(a.to) ? { t: 'moveKid', id: a.id, to: a.to } : null
     case 'restore': {
       const c = a.clock as Record<string, unknown> | undefined
       const ms = a.ms as Record<string, unknown> | undefined
@@ -489,6 +583,7 @@ export function parseAction(x: unknown): Action | null {
     case 'drillStart':
     case 'drillPause':
     case 'drillReset':
+    case 'clearTeams':
       return { t: a.t }
     default:
       return null

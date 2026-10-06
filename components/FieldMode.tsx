@@ -13,6 +13,7 @@ import {
   inverseOf,
   keeperGroupIds,
   kickedOff,
+  splitTeams,
   subMarks,
   suggestSwaps,
   type Action,
@@ -33,6 +34,7 @@ type Props = {
 }
 
 const EMPTY: KidState = { here: false, on: false, gk: false, ms: 0 }
+const TEAM_NAMES = ['Team A', 'Team B', 'Team C']
 
 function mmss(ms: number) {
   const t = Math.max(0, Math.ceil(ms / 1000))
@@ -54,6 +56,8 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [armed, setArmed] = useState<null | 'discard'>(null)
+  const [practiceTab, setPracticeTab] = useState<'here' | 'scrimmage'>('here')
+  const [teamCount, setTeamCount] = useState(2)
   const undoStack = useRef<{ label: string; inverse: Action[] }[]>([])
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const audio = useRef<AudioContext | null>(null)
@@ -342,6 +346,13 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
   )
 
   // ================= PRACTICE =================
+  const teams = st.teams?.length ? st.teams : null
+  function split() {
+    if (!st) return
+    live.dispatch([{ t: 'teams', teams: splitTeams(st, kids, groups, teams?.length ?? teamCount) }])
+    buzz(40)
+    toast(teams ? 'Reshuffled' : 'Teams made')
+  }
   if (!isGame) {
     const d = st.drill
     const left = d.length - d.elapsed
@@ -385,9 +396,87 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
             <button className="end" onClick={() => live.dispatch([{ t: 'drillReset' }])}>Reset</button>
           </div>
         </div>
+        <div className="seg-tabs" role="tablist" aria-label="Practice">
+          <button role="tab" aria-selected={practiceTab === 'here'} onClick={() => setPracticeTab('here')}>
+            Who’s here · {n}
+          </button>
+          <button role="tab" aria-selected={practiceTab === 'scrimmage'} onClick={() => setPracticeTab('scrimmage')}>
+            Scrimmage{teams ? ` · ${teams.length === 2 ? teams.map((t) => t.length).join(' v ') : `${teams.length} teams`}` : ''}
+          </button>
+        </div>
         <div className="roster">
-          {checkInHeader}
-          {kids.length === 0 ? noKids : checkInTiles}
+          {practiceTab === 'here' ? (
+            <>
+              {checkInHeader}
+              {kids.length === 0 ? noKids : checkInTiles}
+            </>
+          ) : teams ? (
+            <>
+              <div className="group-h">
+                <span>{teams.map((t) => t.length).join(' v ')}</span>
+                <span className="hint">Tap a kid to move them</span>
+              </div>
+              <div className={`teams n${teams.length}`}>
+                {teams.map((side, i) => {
+                  const sideKids = side.map((id) => kids.find((k) => k.id === id)).filter((k): k is Kid => !!k)
+                  const mix = fieldGroups
+                    .map((g) => [g.name, sideKids.filter((k) => k.groups.includes(g.id)).length] as const)
+                    .filter(([, c]) => c > 0)
+                    .map(([name, c]) => `${name} ${c}`)
+                    .join(' · ')
+                  return (
+                    <section key={i} className={`team-col t${i}`} aria-label={TEAM_NAMES[i]}>
+                      <h3 className="team-h">
+                        {TEAM_NAMES[i]} · {sideKids.length}
+                      </h3>
+                      {mix && <p className="coverage">{mix}</p>}
+                      {sideKids.map((k) => {
+                        const gn = groups.filter((g) => k.groups.includes(g.id)).map((g) => g.name)
+                        const to = (i + 1) % teams.length
+                        return (
+                          <button
+                            key={k.id}
+                            className="team-kid"
+                            onClick={() => {
+                              live.dispatch([{ t: 'moveKid', id: k.id, to }])
+                              buzz(20)
+                              toast(`${k.name} to ${TEAM_NAMES[to]}`)
+                            }}
+                            aria-label={`${k.name}${gn.length ? ` (${gn.join(', ')})` : ''}, on ${TEAM_NAMES[i]}. Tap to move to ${TEAM_NAMES[to]}.`}
+                          >
+                            <span className="t-name">{k.name}</span>
+                            {gn.length > 0 && <span className="t-groups">{gn.join(' · ')}</span>}
+                          </button>
+                        )
+                      })}
+                    </section>
+                  )
+                })}
+              </div>
+              <div className="btn-grid">
+                <button className="ghost-btn" onClick={split}>Reshuffle</button>
+                <button className="ghost-btn" onClick={() => live.dispatch([{ t: 'clearTeams' }])}>Clear teams</button>
+              </div>
+            </>
+          ) : (
+            <div className="stack">
+              <p className="note">
+                {n < 2
+                  ? 'Check in at least 2 kids, then split them into teams here.'
+                  : `Split the ${n} kids who are here into even teams${groups.length ? ', with position groups spread across them and Goalies on different teams' : ''}. Late arrivals join the smaller team.`}
+              </p>
+              <div className="chips pair">
+                {[2, 3].map((c) => (
+                  <button key={c} className="chip" aria-pressed={teamCount === c} onClick={() => setTeamCount(c)}>
+                    {c} teams
+                  </button>
+                ))}
+              </div>
+              <button className="go-btn" disabled={n < 2} onClick={split}>
+                Split {n} into {teamCount} teams
+              </button>
+            </div>
+          )}
         </div>
         <div className="cta">
           <button className="go-btn" disabled={busy} onClick={() => endSession('finish')}>

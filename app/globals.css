@@ -12,6 +12,7 @@
   --whistle: #f2b705;
   --whistle-ink: #241b00;
   --danger: #b3261e;
+  --team-c: #6d3fd1;
   --font-display: var(--font-barlow), 'Arial Narrow', system-ui, sans-serif;
   --font-body: var(--font-atkinson), system-ui, -apple-system, 'Segoe UI', sans-serif;
   color-scheme: light;
@@ -30,6 +31,7 @@
     --whistle: #f5c542;
     --whistle-ink: #211800;
     --danger: #ff8a80;
+    --team-c: #b49cff;
   }
 }
 
@@ -260,7 +262,18 @@ details > summary::-webkit-details-marker { display: none; }
 }
 .field-app.checkin { grid-template-rows: auto auto 1fr auto; }
 .field-app.game { grid-template-rows: auto auto auto 1fr auto; }
-.field-app.practice { grid-template-rows: auto auto 1fr auto; }
+.field-app.practice { grid-template-rows: auto auto auto 1fr auto; }
+.seg-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.seg-tabs button { min-height: 48px; border-radius: 12px; border: 2px solid var(--line); background: var(--surface); font-weight: 700; font-size: 1rem; }
+.seg-tabs button[aria-selected='true'] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.teams { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: start; }
+.teams.n3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.team-col { --team-color: var(--turf); display: grid; gap: 6px; padding: 8px; border-radius: 14px; background: var(--surface); border-top: 6px solid var(--team-color); }
+.team-col.t1 { --team-color: var(--whistle); }
+.team-col.t2 { --team-color: var(--team-c); }
+.team-h { margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 1.2rem; letter-spacing: 0.03em; text-transform: uppercase; }
+.team-kid { display: grid; gap: 2px; min-height: 52px; padding: 6px 10px; border-radius: 10px; border: 2px solid var(--line); background: var(--bg); text-align: left; }
+.team-kid .t-name { font-size: 1.05rem; }
 .sync {
   flex: none;
   padding: 4px 9px;

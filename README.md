@@ -2,7 +2,7 @@
 
 A phone-first web app for rec soccer coaches (U6–U14). Define your teams once, then start a game or a
 practice in one tap: check kids in as they arrive, make a fair lineup, run the game clock and suggested
-substitutions, or run drill timers at practice. Head and assistant coaches share the same live game on
+substitutions, or at practice run drill timers and split whoever showed up into even scrimmage teams. Head and assistant coaches share the same live game on
 their own phones.
 
 ## Stack

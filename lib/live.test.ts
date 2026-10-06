@@ -10,6 +10,7 @@ import {
   parseAction,
   parseTimed,
   project,
+  splitTeams,
   subMarks,
   suggestSwaps,
   type Action,
@@ -240,4 +241,52 @@ test('network input is validated', () => {
   assert.equal(parseAction({ t: 'swap', pairs: [['a']] }), null)
   assert.deepEqual(parseAction({ t: 'goal', side: 'us', d: 1, extra: 'x' }), { t: 'goal', side: 'us', d: 1 })
   assert.equal(parseTimed({ a: { t: 'start' }, at: 'soon' }), null)
+})
+
+test('scrimmage: 9 kids split 5 v 4, goalies one per side, position groups spread', () => {
+  const groups = [
+    { id: 'L', name: 'Left' },
+    { id: 'C', name: 'Center' },
+    { id: 'R', name: 'Right' },
+    { id: 'G', name: 'Goalie' },
+  ]
+  const nine = ids.slice(0, 9)
+  const kids: Kid[] = nine.map((id, n) => ({ id, name: id, groups: id === 'a' || id === 'b' ? ['G'] : [['L', 'C', 'R'][n % 3]] }))
+  const st = newState('practice', ids, T0)
+  for (const id of nine) apply(st, { t: 'here', id, here: true }, T0, r4, roster)
+  for (let seed = 1; seed < 40; seed++) {
+    let x = seed
+    const rand = () => ((x = (x * 9301 + 49297) % 233280) / 233280)
+    const teams = splitTeams(st, kids, groups, 2, rand)
+    assert.deepEqual(teams.map((t) => t.length).sort(), [4, 5])
+    assert.equal(new Set(teams.flat()).size, 9, 'everyone placed once')
+    for (const t of teams) assert.equal(t.filter((id) => id === 'a' || id === 'b').length, 1, 'one goalie each')
+    for (const g of ['L', 'C', 'R']) {
+      const per = teams.map((t) => t.filter((id) => kids.find((k) => k.id === id)!.groups.includes(g)).length)
+      assert.ok(Math.abs(per[0] - per[1]) <= 1, `group ${g} spread ${per}`)
+    }
+  }
+  assert.deepEqual(splitTeams(st, kids, [], 3).map((t) => t.length).sort(), [3, 3, 3])
+})
+
+test('scrimmage sides follow check-in, and a tap moves a kid across', () => {
+  const st = newState('practice', ids, T0)
+  for (const id of ids.slice(0, 5)) apply(st, { t: 'here', id, here: true }, T0, r4, roster)
+  apply(st, { t: 'teams', teams: [['a', 'b', 'c'], ['d', 'e'], ['zz']] }, T0, r4, roster)
+  assert.deepEqual(st.teams, [['a', 'b', 'c'], ['d', 'e'], []], 'unknown kids dropped')
+  apply(st, { t: 'clearTeams' }, T0, r4, roster)
+  apply(st, { t: 'teams', teams: [['a', 'b', 'c'], ['d', 'e']] }, T0, r4, roster)
+  apply(st, { t: 'here', id: 'f', here: true }, T0, r4, roster)
+  assert.deepEqual(st.teams![1], ['d', 'e', 'f'], 'late arrival joins the smaller side')
+  apply(st, { t: 'here', id: 'b', here: false }, T0, r4, roster)
+  assert.deepEqual(st.teams![0], ['a', 'c'], 'a kid who leaves drops off')
+  apply(st, { t: 'moveKid', id: 'a', to: 1 }, T0, r4, roster)
+  assert.deepEqual(st.teams, [['c'], ['d', 'e', 'f', 'a']])
+  apply(st, { t: 'allHere', here: false }, T0, r4, roster)
+  assert.equal(st.teams, null)
+  const game = liveGame(r4)
+  apply(game, { t: 'teams', teams: [['a'], ['b']] }, T0, r4, roster)
+  assert.equal(game.teams, null, 'games have no scrimmage sides')
+  assert.equal(parseAction({ t: 'teams', teams: [['a']] }), null)
+  assert.deepEqual(parseAction({ t: 'moveKid', id: 'a', to: 1 }), { t: 'moveKid', id: 'a', to: 1 })
 })
