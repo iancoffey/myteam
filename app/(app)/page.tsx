@@ -28,7 +28,6 @@ export default async function Home() {
             Add your team once: pick the age group and the rest is filled in. It takes about 30 seconds.
           </p>
           <Link href="/teams/new" className="btn primary big">Add your team</Link>
-          <p className="note">Assistant coach? Ask your head coach to add your email to their team.</p>
         </section>
       )}
 
@@ -53,6 +52,10 @@ export default async function Home() {
           </section>
         )
       })}
+
+      {teams.length > 0 && (
+        <p className="note">Every coach who signs in sees these teams, and the same live games, timers and scrimmage teams.</p>
+      )}
 
       {teams.length > 0 && (
         <Link href="/teams/new" className="link-row">

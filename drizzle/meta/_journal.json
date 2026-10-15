@@ -36,6 +36,13 @@
       "when": 1791121682050,
       "tag": "0004_coaches_live_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792089333105,
+      "tag": "0005_everyone_shares",
+      "breakpoints": true
     }
   ]
 }

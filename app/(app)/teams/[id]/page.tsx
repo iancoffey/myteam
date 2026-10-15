@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { SessionCard } from '@/components/SessionCard'
 import { StartButtons } from '@/components/StartButtons'
-import { getCoachTeam, getLive, listCoaches, listGames, listPlayers, seasonMinutes, teamRules, teamSettings } from '@/lib/data'
+import { getCoachTeam, getLive, listGames, listPlayers, seasonMinutes, teamRules, teamSettings } from '@/lib/data'
 import { cleanGroups, formatLabel, settingsLine } from '@/lib/formats'
 import { kickedOff } from '@/lib/live'
 import { liveSummary } from '@/lib/summary'
@@ -10,12 +10,11 @@ import { formatDay } from '@/lib/time'
 export default async function TeamPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const { team: t } = await getCoachTeam(id)
-  const [kids, season, recent, row, coaches] = await Promise.all([
+  const [kids, season, recent, row] = await Promise.all([
     listPlayers(t.id),
     seasonMinutes(t.id),
     listGames(t.id, 5),
     getLive(t.id),
-    listCoaches(t),
   ])
   const settings = teamSettings(t)
   const groups = cleanGroups(t.groups)
@@ -56,15 +55,6 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
       <div className="stack">
         <Link href={`/teams/${t.id}/roster`} className="link-row">
           <span>Roster<span className="sub">{kids.length} {kids.length === 1 ? 'kid' : 'kids'}</span></span>
-          <span>→</span>
-        </Link>
-        <Link href={`/teams/${t.id}/coaches`} className="link-row">
-          <span>
-            Coaches
-            <span className="sub">
-              {1 + coaches.assistants.length} {coaches.assistants.length ? 'coaches' : 'coach'} · lineups and subs sync live
-            </span>
-          </span>
           <span>→</span>
         </Link>
       </div>

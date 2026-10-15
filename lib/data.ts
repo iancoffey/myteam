@@ -1,67 +1,45 @@
 import 'server-only'
-import { and, asc, desc, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { notFound } from 'next/navigation'
 import { db, schema } from './db'
-import { getSession, requireSession, type Session } from './auth'
+import { getSession, requireSession } from './auth'
 import { cleanGroups, type FormatKey, type TeamSettings } from './formats'
 import type { Rules } from './live'
 
-const { users, teams, players, games, teamMembers, liveSessions } = schema
+const { teams, players, games, liveSessions } = schema
 export type Team = typeof teams.$inferSelect
 
 const isUuid = (s: string) => /^[0-9a-f-]{36}$/i.test(s)
 
-// Every team read goes through here: a coach sees a team they own or were added to as a coach.
-async function findCoachTeam(teamId: string, session: Session) {
+// Everyone who can sign in is on the same coaching staff, so every signed-in coach sees every team,
+// its live game or practice, timers, scrimmage teams and saved games.
+async function findTeam(teamId: string) {
   if (!isUuid(teamId)) return null
   const d = await db()
-  const [team] = await d
-    .select()
-    .from(teams)
-    .where(
-      and(
-        eq(teams.id, teamId),
-        or(
-          eq(teams.ownerId, session.userId),
-          inArray(
-            teams.id,
-            d.select({ id: teamMembers.teamId }).from(teamMembers).where(eq(teamMembers.email, session.email)),
-          ),
-        ),
-      ),
-    )
-  return team ? { team, isOwner: team.ownerId === session.userId } : null
+  const [team] = await d.select().from(teams).where(eq(teams.id, teamId))
+  return team ?? null
 }
 
-// For pages and server actions: 404 unless this coach can see the team.
+// For pages and server actions: sign in first, 404 for a team that doesn't exist.
 export async function getCoachTeam(teamId: string) {
   const session = await requireSession()
-  const found = await findCoachTeam(teamId, session)
-  if (!found) notFound()
-  return { ...found, session }
+  const team = await findTeam(teamId)
+  if (!team) notFound()
+  return { team, session }
 }
 
 // For API routes: null instead of redirecting.
 export async function coachTeamOrNull(teamId: string) {
   const session = await getSession()
   if (!session) return null
-  const found = await findCoachTeam(teamId, session)
-  return found ? { ...found, session } : null
+  const team = await findTeam(teamId)
+  return team ? { team, session } : null
 }
 
 export async function listTeams() {
-  const session = await requireSession()
+  await requireSession()
   const d = await db()
-  return d
-    .select()
-    .from(teams)
-    .where(
-      or(
-        eq(teams.ownerId, session.userId),
-        inArray(teams.id, d.select({ id: teamMembers.teamId }).from(teamMembers).where(eq(teamMembers.email, session.email))),
-      ),
-    )
-    .orderBy(asc(teams.createdAt))
+  return d.select().from(teams).orderBy(asc(teams.createdAt))
 }
 
 export function teamSettings(t: Team): TeamSettings {
@@ -87,17 +65,6 @@ export async function sessionKids(t: Team) {
   const valid = new Set(groups.map((g) => g.id))
   const kids = await listPlayers(t.id)
   return { groups, kids: kids.map((k) => ({ id: k.id, name: k.firstName, groups: k.groupIds.filter((id) => valid.has(id)) })) }
-}
-
-export async function listCoaches(t: Team) {
-  const d = await db()
-  const [owner] = await d.select({ email: users.email }).from(users).where(eq(users.id, t.ownerId))
-  const members = await d
-    .select({ email: teamMembers.email })
-    .from(teamMembers)
-    .where(eq(teamMembers.teamId, t.id))
-    .orderBy(asc(teamMembers.addedAt))
-  return { owner: owner?.email ?? '', assistants: members.map((m) => m.email) }
 }
 
 export async function getLive(teamId: string) {

@@ -5,8 +5,9 @@ out
 *.tsbuildinfo
 next-env.d.ts
 
-# local database
+# local database and test output
 .data
+e2e/.out
 
 # secrets: every .env file except the documented example
 .env*

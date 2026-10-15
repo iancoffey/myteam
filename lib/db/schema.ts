@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import type { PositionGroup } from '../formats'
 import type { GameLogEntry } from '../gamelog'
 import type { LiveState } from '../live'
@@ -54,21 +54,7 @@ export const players = pgTable(
   (t) => [index('players_team_idx').on(t.teamId)],
 )
 
-// Assistant coaches, by the email they sign in with. They may not have signed in yet, so this
-// isn't keyed by user id. The team's owner is teams.ownerId and isn't listed here.
-export const teamMembers = pgTable(
-  'team_members',
-  {
-    teamId: uuid('team_id')
-      .notNull()
-      .references(() => teams.id, { onDelete: 'cascade' }),
-    email: text('email').notNull(),
-    addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [primaryKey({ columns: [t.teamId, t.email] }), index('team_members_email_idx').on(t.email)],
-)
-
-// The game or practice happening now, shared by every coach on the team. At most one per team;
+// The game or practice happening now, shared by every coach. At most one per team;
 // the row is deleted when the session is finished (a game is then saved to games) or discarded.
 export const liveSessions = pgTable('live_sessions', {
   id: uuid('id').primaryKey().defaultRandom(),

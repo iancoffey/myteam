@@ -24,6 +24,14 @@ npm run dev
 Open http://localhost:3000 and sign in as `coach@example.com` / `soccer`. Data lives in `.data/`
 (delete it to start over).
 
+## Tests
+
+```sh
+npm test                      # game rules (lib/live.test.ts)
+npx playwright install chromium   # once
+npm run e2e                   # phone-sized browser scenarios, incl. two coaches sharing a game
+```
+
 ## Deploy to Vercel
 
 1. Import the repo into Vercel.
@@ -35,9 +43,9 @@ Open http://localhost:3000 and sign in as `coach@example.com` / `soccer`. Data l
 4. Deploy. The build only compiles the app; it never needs the database. The app creates and
    updates its tables on first use. If a setting is missing, the sign-in page lists what to add.
 
-To add or remove a coach's login, edit `AUTH_USERS` and redeploy. Removed logins are signed out on
-their next request. To let an assistant coach a team, give them a login, then add their email on the
-team's Coaches page.
+Everyone who can sign in is on the same coaching staff: every signed-in coach sees every team and the
+same live games, timers and scrimmage teams. To add or remove a coach, edit `AUTH_USERS` and redeploy.
+Removed logins are signed out on their next request.
 
 ## Database changes
 
@@ -51,6 +59,6 @@ The app applies it on its next start, locally and in production.
 - `app/api/teams/[id]/live/`: start, sync and end the live session
 - `components/useLive.ts`: keeps a phone in sync, queues taps when offline
 - `components/FieldMode.tsx`: the game-day and practice screens
-- `app/(app)/`: team list, team page, roster, coaches, settings, saved games
-- `app/actions.ts`: form actions, each checking the coach can see the team
+- `app/(app)/`: team list, team page, roster, settings, saved games
+- `app/actions.ts`: form actions (all require a signed-in coach)
 - `lib/formats.ts`: age-group defaults and game formats

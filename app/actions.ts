@@ -4,13 +4,12 @@ import { and, eq, max } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { checkPassword, endSession, missingSettings, requireSession, startSession, upsertUser } from '@/lib/auth'
-import { getCoachTeam, listCoaches } from '@/lib/data'
+import { getCoachTeam } from '@/lib/data'
 import { db, schema } from '@/lib/db'
-import { normalizeEmail } from '@/lib/email'
 import { AGES, FORMATS, LIMITS, agePreset, cleanGroups, isAge, type FormatKey } from '@/lib/formats'
 import { isValidTimeZone } from '@/lib/time'
 
-const { teams, players, games, teamMembers } = schema
+const { teams, players, games } = schema
 
 export type FormState = { error?: string; ok?: string } | undefined
 
@@ -107,35 +106,11 @@ export async function updateTeam(_: FormState, fd: FormData): Promise<FormState>
 }
 
 export async function deleteTeam(fd: FormData) {
-  const { team, isOwner } = await getCoachTeam(str(fd, 'teamId'))
-  if (!isOwner) return
+  const { team } = await getCoachTeam(str(fd, 'teamId'))
   const d = await db()
   await d.delete(teams).where(eq(teams.id, team.id))
   revalidatePath('/')
   redirect('/')
-}
-
-// ---------- coaches ----------
-
-export async function addCoach(_: FormState, fd: FormData): Promise<FormState> {
-  const { team, isOwner } = await getCoachTeam(str(fd, 'teamId'))
-  if (!isOwner) return { error: 'Only the team’s owner can add coaches.' }
-  const email = normalizeEmail(str(fd, 'email'))
-  if (!email) return { error: 'Enter the email your assistant signs in with.' }
-  const { owner } = await listCoaches(team)
-  if (email === owner) return { error: 'That’s you. You already coach this team.' }
-  const d = await db()
-  await d.insert(teamMembers).values({ teamId: team.id, email }).onConflictDoNothing()
-  refreshTeam(team.id)
-  return { ok: `Added ${email}.` }
-}
-
-export async function removeCoach(fd: FormData) {
-  const { team, isOwner } = await getCoachTeam(str(fd, 'teamId'))
-  if (!isOwner) return
-  const d = await db()
-  await d.delete(teamMembers).where(and(eq(teamMembers.teamId, team.id), eq(teamMembers.email, str(fd, 'email').toLowerCase())))
-  refreshTeam(team.id)
 }
 
 // ---------- roster ----------
