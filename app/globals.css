@@ -36,7 +36,8 @@
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html, body { min-height: 100%; }
 body {
   margin: 0;
   background: var(--bg);
@@ -248,21 +249,31 @@ details > summary::-webkit-details-marker { display: none; }
 .bar-fill { height: 100%; background: var(--turf); }
 
 /* ---------- Field mode ---------- */
+/* Field screens scroll like any iPhone page: the header and clock stay pinned at the top, the main
+   buttons are fixed above the home indicator, and everything in between scrolls normally. */
 .field-app {
-  height: 100dvh;
+  min-height: 100dvh;
   max-width: 520px;
   margin: 0 auto;
   padding-inline: 16px;
-  padding-top: calc(10px + env(safe-area-inset-top, 0px));
-  display: grid;
+  padding-bottom: calc(150px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  overscroll-behavior: none;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
-.field-app.checkin { grid-template-rows: auto auto 1fr auto; }
-.field-app.game { grid-template-rows: auto auto auto 1fr auto; }
-.field-app.practice { grid-template-rows: auto auto auto 1fr auto; }
+.field-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: grid;
+  gap: 8px;
+  margin-inline: -16px;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 16px 8px;
+  background: var(--bg);
+}
 .seg-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .seg-tabs button { min-height: 48px; border-radius: 12px; border: 2px solid var(--line); background: var(--surface); font-weight: 700; font-size: 1rem; }
 .seg-tabs button[aria-selected='true'] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
@@ -314,27 +325,28 @@ details > summary::-webkit-details-marker { display: none; }
 
 .clock {
   display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 4px 12px;
-  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: 'period state' 'time time' 'bar bar';
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 0;
   border: 0;
   border-radius: 18px;
   background: var(--ink);
   color: var(--bg);
-  padding: 8px 18px 10px;
+  padding: 8px 6px 10px 16px;
   text-align: left;
 }
-.clock .period { font-family: var(--font-display); font-weight: 700; font-size: 1.25rem; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.8; }
-.clock .time { grid-row: span 2; font-family: var(--font-display); font-weight: 800; font-size: clamp(3.6rem, 19vw, 5.2rem); line-height: 0.95; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
-.clock .state { font-size: 0.85rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+.clock .period { grid-area: period; font-family: var(--font-display); font-weight: 700; font-size: 1rem; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.8; white-space: nowrap; }
+.clock .time { grid-area: time; font-family: var(--font-display); font-weight: 800; font-size: clamp(2.9rem, 14vw, 4rem); line-height: 0.95; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.clock .state { grid-area: state; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .clock .state.paused { color: var(--whistle); }
 .clock.running .state { opacity: 0.7; }
 
-.clock-wrap { display: grid; border-radius: 18px; background: var(--ink); color: var(--bg); overflow: hidden; }
+.clock-wrap { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: 18px; background: var(--ink); color: var(--bg); overflow: hidden; }
 .clock-wrap .clock { border-radius: 0; background: transparent; }
 .clock-bar {
-  grid-column: 1 / -1;
+  grid-area: bar;
   position: relative;
   height: 6px;
   margin-top: 6px;
@@ -345,20 +357,26 @@ details > summary::-webkit-details-marker { display: none; }
 .clock-bar b { position: absolute; top: -4px; width: 4px; height: 14px; margin-left: -2px; border-radius: 2px; background: var(--whistle); }
 .clock-bar b.done { opacity: 0.35; }
 .start-btn {
-  margin: 0 10px 10px;
-  height: 64px;
+  grid-column: 2;
+  grid-row: 1;
+  margin: 10px 10px 10px 0;
+  min-width: 112px;
+  max-width: 46vw;
+  padding-inline: 14px;
+  height: 72px;
+  line-height: 1.05;
   border: 0;
   border-radius: 14px;
   background: var(--turf);
   color: var(--turf-ink);
   font-family: var(--font-display);
   font-weight: 800;
-  font-size: 1.8rem;
-  letter-spacing: 0.08em;
+  font-size: 1.45rem;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 .start-btn.pause { background: transparent; color: var(--bg); border: 2px solid color-mix(in srgb, var(--bg) 45%, transparent); }
-.clock-strip { display: flex; align-items: center; gap: 6px; padding: 0 10px 10px; }
+.clock-strip { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; padding: 0 10px 10px; }
 .clock-strip .spacer { flex: 1; }
 .clock-strip button {
   height: 44px;
@@ -406,7 +424,7 @@ details > summary::-webkit-details-marker { display: none; }
 .call.due .go-btn { background: var(--whistle-ink); color: var(--whistle); }
 .ghost-btn { min-height: 56px; width: 100%; border-radius: 14px; border: 2px solid currentColor; background: transparent; font-weight: 700; font-size: 1.05rem; }
 
-.roster { overflow-y: auto; display: grid; align-content: start; gap: 10px; padding-bottom: 8px; margin-inline: -4px; padding-inline: 4px; }
+.roster { display: grid; align-content: start; gap: 10px; }
 .group-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 28px; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding-top: 4px; }
 .group-h .hint { font-weight: 400; letter-spacing: 0; text-transform: none; font-size: 0.85rem; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
@@ -437,11 +455,23 @@ details > summary::-webkit-details-marker { display: none; }
 .t-bar i { display: block; height: 100%; background: currentColor; opacity: 0.55; }
 .tile.away .t-bar { visibility: hidden; }
 
-.thumbbar { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 8px; padding-top: 10px; padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); border-top: 2px solid var(--line); }
+.thumbbar, .cta {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  max-width: 520px;
+  margin-inline: auto;
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg);
+  border-top: 2px solid var(--line);
+}
+.thumbbar { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 8px; }
 .thumbbar button { height: 60px; border-radius: 14px; border: 2px solid var(--line); background: var(--surface); font-weight: 700; font-size: 1rem; line-height: 1.1; padding-inline: 6px; }
 .thumbbar button:disabled { opacity: 0.4; cursor: default; }
 .thumbbar .goal { font-family: var(--font-display); font-size: 1.3rem; letter-spacing: 0.03em; }
-.cta { display: grid; gap: 6px; padding-top: 10px; padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); border-top: 2px solid var(--line); }
+.cta { display: grid; gap: 6px; }
 .cta-note { margin: 0; text-align: center; color: var(--muted); font-size: 0.95rem; min-height: 1.2em; }
 
 .sheet-wrap {
@@ -475,7 +505,7 @@ details > summary::-webkit-details-marker { display: none; }
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(130px + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
   background: var(--ink);
   color: var(--bg);

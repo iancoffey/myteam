@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   title: 'myteam',
   description: 'Run rec soccer games and practices from your phone: check-in, lineups, fair subs and a clock every coach shares.',
   appleWebApp: { capable: true, title: 'myteam', statusBarStyle: 'default' },
-  icons: { icon: '/icon.svg', apple: '/icon.svg' },
+  icons: { icon: '/icon.svg', apple: '/apple-touch-icon.png' },
 }
 
 export const viewport: Viewport = {

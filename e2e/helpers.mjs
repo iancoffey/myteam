@@ -1,4 +1,4 @@
-import { chromium } from 'playwright'
+import { chromium, devices, webkit } from 'playwright'
 
 export const BASE = `http://localhost:${process.env.PORT ?? 3100}`
 export const OUT = new URL('./.out/', import.meta.url).pathname
@@ -14,12 +14,14 @@ export const secs = (t) => {
 }
 
 // One browser, any number of phones (separate sign-ins). Collects page errors from all of them.
-export async function phones(n = 1) {
-  const browser = await chromium.launch()
+// Pass an iPhone name (e.g. 'iPhone SE (3rd gen)') to run in Safari's engine at that phone's size.
+export async function phones(n = 1, iphone) {
+  const browser = iphone ? await webkit.launch() : await chromium.launch()
   const errors = []
   const pages = []
   for (let i = 0; i < n; i++) {
-    const p = await (await browser.newContext(phone)).newPage()
+    const opts = iphone ? { ...devices[iphone], timezoneId: 'America/Chicago', reducedMotion: 'reduce' } : phone
+    const p = await (await browser.newContext(opts)).newPage()
     p.on('pageerror', (e) => errors.push(`phone ${i + 1}: ${e.message}`))
     p.on('console', (m) => m.type() === 'error' && !/Failed to load resource/.test(m.text()) && errors.push(`phone ${i + 1}: ${m.text()}`))
     pages.push(p)

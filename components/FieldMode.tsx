@@ -35,6 +35,10 @@ type Props = {
 
 const EMPTY: KidState = { here: false, on: false, gk: false, ms: 0 }
 const TEAM_NAMES = ['Team A', 'Team B', 'Team C']
+// Fits the Start button beside the clock: "Q2", "2nd half", "P3".
+function shortPeriod(periods: number, p: number) {
+  return periods === 2 ? (p === 1 ? '1st half' : '2nd half') : periods === 4 ? `Q${p}` : `P${p}`
+}
 
 function mmss(ms: number) {
   const t = Math.max(0, Math.ceil(ms / 1000))
@@ -359,41 +363,43 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
     const done = left <= 0
     return (
       <main className="field-app practice">
-        <header className="f-top">
-          <h1 className="f-title">Practice</h1>
-          {sync}
-          {topButtons}
-        </header>
-        <div className="clock-wrap">
-          <div className={`clock${d.running ? ' running' : ''}`} role="timer" aria-label={`Drill timer, ${mmss(left)} left`}>
-            <span className="period">Drill timer</span>
-            <span className="time">{mmss(left)}</span>
-            <span className={`state${!d.running ? ' paused' : ''}`}>
-              {done ? 'Time!' : d.running ? 'Running' : d.elapsed > 0 ? 'Paused' : 'Ready'}
-            </span>
-            <span className="clock-bar" aria-hidden="true">
-              <i style={{ width: `${Math.min(100, (d.elapsed / d.length) * 100)}%` }} />
-            </span>
-          </div>
-          <button
-            className={`start-btn${d.running ? ' pause' : ''}`}
-            onClick={() => live.dispatch([{ t: d.running ? 'drillPause' : 'drillStart' }])}
-          >
-            {d.running ? 'Pause' : done ? 'Start again' : d.elapsed > 0 ? 'Resume' : 'Start'}
-          </button>
-          <div className="clock-strip">
-            {DRILL_PRESETS_MIN.map((m) => (
-              <button
-                key={m}
-                aria-pressed={d.length === m * MIN}
-                className={d.length === m * MIN ? 'on' : undefined}
-                onClick={() => live.dispatch([{ t: 'drillSet', ms: m * MIN }])}
-              >
-                {m}′
-              </button>
-            ))}
-            <span className="spacer" />
-            <button className="end" onClick={() => live.dispatch([{ t: 'drillReset' }])}>Reset</button>
+        <div className="field-sticky">
+          <header className="f-top">
+            <h1 className="f-title">Practice</h1>
+            {sync}
+            {topButtons}
+          </header>
+          <div className="clock-wrap">
+            <div className={`clock${d.running ? ' running' : ''}`} role="timer" aria-label={`Drill timer, ${mmss(left)} left`}>
+              <span className="period">Drill timer</span>
+              <span className="time">{mmss(left)}</span>
+              <span className={`state${!d.running ? ' paused' : ''}`}>
+                {done ? 'Time!' : d.running ? 'Running' : d.elapsed > 0 ? 'Paused' : 'Ready'}
+              </span>
+              <span className="clock-bar" aria-hidden="true">
+                <i style={{ width: `${Math.min(100, (d.elapsed / d.length) * 100)}%` }} />
+              </span>
+            </div>
+            <button
+              className={`start-btn${d.running ? ' pause' : ''}`}
+              onClick={() => live.dispatch([{ t: d.running ? 'drillPause' : 'drillStart' }])}
+            >
+              {d.running ? 'Pause' : done ? 'Again' : d.elapsed > 0 ? 'Resume' : 'Start'}
+            </button>
+            <div className="clock-strip">
+              {DRILL_PRESETS_MIN.map((m) => (
+                <button
+                  key={m}
+                  aria-pressed={d.length === m * MIN}
+                  className={d.length === m * MIN ? 'on' : undefined}
+                  onClick={() => live.dispatch([{ t: 'drillSet', ms: m * MIN }])}
+                >
+                  {m}′
+                </button>
+              ))}
+              <span className="spacer" />
+              <button className="end" onClick={() => live.dispatch([{ t: 'drillReset' }])}>Reset</button>
+            </div>
           </div>
         </div>
         <div className="seg-tabs" role="tablist" aria-label="Practice">
@@ -493,11 +499,13 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
   if (st.phase === 'checkin') {
     return (
       <main className="field-app checkin">
-        <header className="f-top">
-          <h1 className="f-title">Who’s here?</h1>
-          {sync}
-          {topButtons}
-        </header>
+        <div className="field-sticky">
+          <header className="f-top">
+            <h1 className="f-title">Who’s here?</h1>
+            {sync}
+            {topButtons}
+          </header>
+        </div>
         <div className="team-chip">
           <span className="name">{teamName}</span>
           <span className="line">
@@ -656,58 +664,54 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
 
   return (
     <main className="field-app game">
-      <header className="f-top">
-        <div className="score" aria-live="polite">
-          <span>Us</span>
-          <span className="num">{st.us}</span>
-          <span className="num">–</span>
-          <span className="num">{st.them}</span>
-        </div>
-        {sync}
-        {topButtons}
-      </header>
-
-      <div className="clock-wrap">
-        <div className={`clock${c.running ? ' running' : ''}`} role="timer" aria-label={`${periodName(S.periods, c.period)}, ${mmss(periodMs - c.elapsed)} left`}>
-          <span className="period">
-            {st.final ? 'Full time' : st.over ? `End of ${periodName(S.periods, c.period)}` : periodName(S.periods, c.period)}
-          </span>
-          <span className="time">{mmss(periodMs - c.elapsed)}</span>
-          <span className={`state${!c.running && !st.final ? ' paused' : ''}`}>
-            {st.final ? 'Game over' : st.over ? 'Break' : c.running ? 'Running' : pre ? 'Ready' : 'Paused'}
-          </span>
-          <span className="clock-bar" aria-hidden="true">
-            <i style={{ width: `${Math.min(100, (c.elapsed / periodMs) * 100)}%` }} />
-            {marks.map((m, i) => (
-              <b key={m} className={i < st.marksDone ? 'done' : undefined} style={{ left: `${(m / periodMs) * 100}%` }} />
-            ))}
-          </span>
-        </div>
-        {!st.final && (
-          <button className={`start-btn${c.running ? ' pause' : ''}`} onClick={() => live.dispatch([{ t: c.running ? 'pause' : 'start' }])}>
-            {c.running
-              ? 'Pause'
-              : st.over
-                ? `Start ${periodName(S.periods, c.period + 1)}`
-                : pre
-                  ? `Start ${periodName(S.periods, 1)}`
-                  : 'Resume'}
-          </button>
-        )}
-        {!st.final && (
-          <div className="clock-strip">
-            {!st.over && (
-              <>
-                <button onClick={() => live.dispatch([{ t: 'adjust', ms: -MIN }])} aria-label="Take a minute off the clock">−1′</button>
-                <button onClick={() => live.dispatch([{ t: 'adjust', ms: MIN }])} aria-label="Add a minute to the clock">+1′</button>
-              </>
-            )}
-            <span className="spacer" />
-            <button className="end" onClick={() => act(endPeriodLabel(S.periods, st.over ? c.period + 1 : c.period), { t: 'endPeriod' })}>
-              {endPeriodLabel(S.periods, st.over ? c.period + 1 : c.period)}
-            </button>
+      <div className="field-sticky">
+        <header className="f-top">
+          <div className="score" aria-live="polite">
+            <span>Us</span>
+            <span className="num">{st.us}</span>
+            <span className="num">–</span>
+            <span className="num">{st.them}</span>
           </div>
-        )}
+          {sync}
+          {topButtons}
+        </header>
+
+        <div className="clock-wrap">
+          <div className={`clock${c.running ? ' running' : ''}`} role="timer" aria-label={`${periodName(S.periods, c.period)}, ${mmss(periodMs - c.elapsed)} left`}>
+            <span className="period">
+              {st.final ? 'Full time' : st.over ? `End of ${periodName(S.periods, c.period)}` : periodName(S.periods, c.period)}
+            </span>
+            <span className="time">{mmss(periodMs - c.elapsed)}</span>
+            <span className={`state${!c.running && !st.final ? ' paused' : ''}`}>
+              {st.final ? 'Game over' : st.over ? 'Break' : c.running ? 'Running' : pre ? 'Ready' : 'Paused'}
+            </span>
+            <span className="clock-bar" aria-hidden="true">
+              <i style={{ width: `${Math.min(100, (c.elapsed / periodMs) * 100)}%` }} />
+              {marks.map((m, i) => (
+                <b key={m} className={i < st.marksDone ? 'done' : undefined} style={{ left: `${(m / periodMs) * 100}%` }} />
+              ))}
+            </span>
+          </div>
+          {!st.final && (
+            <button className={`start-btn${c.running ? ' pause' : ''}`} onClick={() => live.dispatch([{ t: c.running ? 'pause' : 'start' }])}>
+              {c.running ? 'Pause' : st.over ? `Start ${shortPeriod(S.periods, c.period + 1)}` : pre ? 'Start' : 'Resume'}
+            </button>
+          )}
+          {!st.final && (
+            <div className="clock-strip">
+              {!st.over && (
+                <>
+                  <button onClick={() => live.dispatch([{ t: 'adjust', ms: -MIN }])} aria-label="Take a minute off the clock">−1′</button>
+                  <button onClick={() => live.dispatch([{ t: 'adjust', ms: MIN }])} aria-label="Add a minute to the clock">+1′</button>
+                </>
+              )}
+              <span className="spacer" />
+              <button className="end" onClick={() => act(endPeriodLabel(S.periods, st.over ? c.period + 1 : c.period), { t: 'endPeriod' })}>
+                {endPeriodLabel(S.periods, st.over ? c.period + 1 : c.period)}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <section className={`call${due && !sel ? ' due' : ''}`} aria-live="polite">

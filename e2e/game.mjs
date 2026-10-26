@@ -42,7 +42,7 @@ step('late arrival, undo, re-arrive, goal')
 await page.click('.clock-strip .end:has-text("End period 1")')
 await page.getByText('End of Period 1 of 8').first().waitFor()
 await page.click('.go-btn:has-text("Swap")')
-await page.click('.start-btn:has-text("Start Period 2 of 8")')
+await page.click('.start-btn:has-text("Start P2")')
 await page.getByText('Running').first().waitFor()
 step('ended period 1, swapped at the break, started period 2')
 
