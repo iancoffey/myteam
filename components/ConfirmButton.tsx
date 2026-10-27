@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react'
 
-// Two-tap submit for destructive actions: no dialog, the first tap arms it for three seconds.
+// Two-tap submit for destructive actions: no dialog, the first tap arms it for three seconds and the
+// second submits. The button stays type="button" and submits explicitly: switching it to a submit
+// button on the first tap would let that same tap submit the form.
 export function ConfirmButton({
   children,
   confirmLabel,
@@ -21,9 +23,11 @@ export function ConfirmButton({
   return (
     <button
       className={className}
-      type={armed ? 'submit' : 'button'}
-      onClick={() => {
-        if (!armed) setArmed(true)
+      type="button"
+      onClick={(e) => {
+        if (!armed) return setArmed(true)
+        setArmed(false)
+        e.currentTarget.form?.requestSubmit()
       }}
     >
       {armed ? confirmLabel : children}

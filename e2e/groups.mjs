@@ -1,9 +1,9 @@
 // Position groups, keeper from the Goalie group, untimed half, pause/nudge, full game to the log.
-import { createTeam, fail, login, phones, step, tag } from './helpers.mjs'
+import { createTeam, fail, phones, signup, step, tag } from './helpers.mjs'
 
 const { pages: [page], done } = await phones(1)
 
-await login(page)
+await signup(page, 'groups-coach@example.com', { club: 'Thunder FC' })
 const teamUrl = await createTeam(page, {
   name: 'Thunder',
   age: 'U10',

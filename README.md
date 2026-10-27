@@ -36,16 +36,22 @@ npm run e2e                   # phone-sized browser scenarios, incl. two coaches
 
 1. Import the repo into Vercel.
 2. Storage → add a **Neon** Postgres database to the project. It sets `DATABASE_URL`.
-3. Settings → Environment Variables (Production and Preview):
-   - `AUTH_USERS`: `you@example.com:a-long-password,coach2@example.com:another-password`
-   - `AUTH_SECRET` (optional): a long random string, e.g. `openssl rand -base64 32`. Without it,
-     sign-ins are signed with a key derived from `DATABASE_URL`.
+3. Optional environment variables (Production and Preview):
+   - `AUTH_SECRET`: a long random string (`openssl rand -base64 32`). Without it, sign-ins are signed
+     with a key derived from `DATABASE_URL`.
+   - `SUPPORT_EMAIL`: shown as the contact on the privacy page.
+   - `AUTH_USERS`: logins from before accounts existed (`email:password,…`). Each becomes a normal
+     account the first time it signs in; after that it can be removed.
 4. Deploy. The build only compiles the app; it never needs the database. The app creates and
-   updates its tables on first use. If a setting is missing, the sign-in page lists what to add.
+   updates its tables on first use.
 
-Everyone who can sign in is on the same coaching staff: every signed-in coach sees every team and the
-same live games, timers and scrimmage teams. To add or remove a coach, edit `AUTH_USERS` and redeploy.
-Removed logins are signed out on their next request.
+## Accounts and clubs
+
+Anyone can create an account (email and password, stored as a scrypt hash; 10 wrong passwords lock
+an account for 15 minutes). A new coach creates a club or league, then shares its invite link from the
+Club page; coaches who join see every team in the club and the same live games, timers and scrimmage
+teams. Clubs never see each other's data. Admins manage coaches, the invite link and deleting teams.
+Account → Delete account removes the account (Apple requires in-app deletion).
 
 ## Database changes
 

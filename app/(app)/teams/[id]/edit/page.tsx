@@ -7,7 +7,7 @@ import { cleanGroups, isAge } from '@/lib/formats'
 
 export default async function EditTeamPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const { team: t } = await getCoachTeam(id)
+  const { team: t, isAdmin } = await getCoachTeam(id)
   return (
     <main className="page">
       <header className="topbar">
@@ -22,13 +22,17 @@ export default async function EditTeamPage({ params }: { params: Promise<{ id: s
         groups={cleanGroups(t.groups)}
         settings={teamSettings(t)}
       />
-      <form action={deleteTeam} style={{ marginTop: 24 }}>
-        <input type="hidden" name="teamId" value={t.id} />
-        <ConfirmButton className="btn danger block" confirmLabel={`Tap again to delete ${t.name}`}>
-          Delete team
-        </ConfirmButton>
-        <p className="note" style={{ marginTop: 8 }}>Deletes the team, its roster and game history for every coach.</p>
-      </form>
+      {isAdmin ? (
+        <form action={deleteTeam} style={{ marginTop: 24 }}>
+          <input type="hidden" name="teamId" value={t.id} />
+          <ConfirmButton className="btn danger block" confirmLabel={`Tap again to delete ${t.name}`}>
+            Delete team
+          </ConfirmButton>
+          <p className="note" style={{ marginTop: 8 }}>Deletes the team, its roster and game history for every coach.</p>
+        </form>
+      ) : (
+        <p className="note" style={{ marginTop: 24 }}>A club admin can delete this team.</p>
+      )}
     </main>
   )
 }

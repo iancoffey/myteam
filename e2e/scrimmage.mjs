@@ -1,10 +1,10 @@
 // Practice scrimmage: 9 kids show up, split into even teams that every coach sees.
-import { OUT, createTeam, fail, login, phones, step, tag } from './helpers.mjs'
+import { OUT, createTeam, fail, inviteLink, phones, signup, step, tag } from './helpers.mjs'
 
 const { pages: [head, asst], done } = await phones(2)
 const sides = (p) => p.$$eval('.team-col', (cols) => cols.map((c) => [...c.querySelectorAll('.team-kid .t-name')].map((n) => n.textContent).sort()))
 
-await login(head)
+await signup(head, 'scrim-head@example.com', { club: 'Comets SC' })
 const teamUrl = await createTeam(head, {
   name: 'Comets',
   age: 'U10',
@@ -26,7 +26,11 @@ for (const t of s) if (t.filter((n) => n === 'Owen' || n === 'Nora').length !== 
 step(`9 kids → ${s.map((t) => t.length).join(' v ')}, one goalie each: ${s.map((t) => t.join(' ')).join(' | ')}`)
 await head.screenshot({ path: `${OUT}scrimmage.png` })
 
-await login(asst, 'asst@example.com', 'assist')
+const link = await inviteLink(head)
+await signup(asst, 'scrim-asst@example.com', { invite: link })
+await head.goto(`${teamUrl}/field`)
+await head.click('button[role="tab"]:has-text("Scrimmage")')
+await head.locator('.team-col').first().waitFor()
 await asst.click('a:has-text("Resume practice")')
 await asst.click('button[role="tab"]:has-text("Scrimmage")')
 await asst.waitForFunction(() => document.querySelectorAll('.team-kid').length === 9, null, { timeout: 8000 })

@@ -43,6 +43,13 @@
       "when": 1792089333105,
       "tag": "0005_everyone_shares",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793113858313,
+      "tag": "0006_accounts_clubs",
+      "breakpoints": true
     }
   ]
 }

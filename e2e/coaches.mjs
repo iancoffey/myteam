@@ -1,13 +1,26 @@
-// Two coaches, two phones, one game: every signed-in coach sees the same teams, game and clock.
-import { OUT, createTeam, fail, login, phones, secs, step } from './helpers.mjs'
+// Two coaches in one club run the same game on two phones; a coach from another club can't see it.
+import { BASE, OUT, createTeam, fail, inviteLink, phones, secs, signup, step } from './helpers.mjs'
 
-const { pages: [head, asst], done } = await phones(2)
+const { pages: [head, asst, outsider], done } = await phones(3)
 
-await login(head)
+await signup(head, 'head@example.com', { club: 'Strikers Club' })
 const teamUrl = await createTeam(head, { name: 'Strikers', age: 'U8', roster: ['Leo', 'Ava', 'Sam', 'Noah', 'Maya', 'Eli', 'Zoe', 'Kai'] })
-await login(asst, 'asst@example.com', 'assist')
+const link = await inviteLink(head)
+await head.screenshot({ path: `${OUT}club.png`, fullPage: true })
+if (!link.startsWith(BASE + '/join/')) fail('invite link looks wrong: ' + link)
+await asst.goto(link)
+await asst.screenshot({ path: `${OUT}join.png` })
+await signup(asst, 'asst@example.com', { invite: link })
 await asst.getByText('Strikers').first().waitFor()
-step('another coach signs in and sees the team right away, without being added')
+step('head coach shares the invite link; the assistant creates an account from it and sees the team')
+
+await signup(outsider, 'other@example.com', { club: 'Another Club' })
+if (await outsider.getByText('Strikers').count()) fail('another club sees Strikers')
+const res = await outsider.goto(teamUrl)
+if (res.status() !== 404) fail('another club can open the team: ' + res.status())
+const api = await outsider.request.get(`${teamUrl.replace('/teams/', '/api/teams/')}/live`)
+if (api.status() !== 404) fail('another club can read the live game: ' + api.status())
+step('a coach in another club can’t see the team, open it, or read its live game')
 
 await head.goto(teamUrl)
 await head.click('button:has-text("Start game")')
@@ -59,5 +72,14 @@ await asst.getByRole('heading', { name: 'Game ended' }).waitFor({ timeout: 8000 
 await asst.goto(teamUrl)
 await asst.getByText('Season minutes · 1 game').waitFor()
 step('one coach ends & saves; the other phone shows it ended and sees the saved game')
+
+await asst.goto(`${teamUrl}/edit`)
+if (await asst.getByText('Delete team').count()) fail('a coach (not admin) can delete the team')
+await head.goto(`${BASE}/club`)
+await head.locator('.card', { hasText: 'asst@example.com' }).locator('button:has-text("Make admin")').click()
+await head.locator('.card', { hasText: 'asst@example.com' }).locator('.pill', { hasText: 'Admin' }).waitFor()
+await asst.goto(`${teamUrl}/edit`)
+await asst.getByText('Delete team').waitFor()
+step('only admins can delete teams; the head coach made the assistant an admin')
 
 await done()

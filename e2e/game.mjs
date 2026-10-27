@@ -1,10 +1,11 @@
 // One coach, U6 team: start a game in one tap, check in, run it, end & save; practice with the drill
 // timer; discard a game from the menu and from the team page.
-import { OUT, createTeam, fail, login, phones, secs, step } from './helpers.mjs'
+import { OUT, createTeam, fail, phones, secs, signup, step } from './helpers.mjs'
 
 const { pages: [page], done } = await phones(1)
 
-await login(page)
+await signup(page, 'game-coach@example.com', { club: 'Riverside Youth Soccer' })
+step('signed up and created a club')
 const teamUrl = await createTeam(page, { name: 'Green Rockets', age: 'U6', roster: ['Leo', 'Ava', 'Sam', 'Noah', 'Maya', 'Eli'] })
 if (/schedule|snack|parent/i.test(await page.locator('main').innerText())) fail('team page mentions schedule/snacks/parents')
 step('team created; no schedule, snacks or parents')

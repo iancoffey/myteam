@@ -1,13 +1,50 @@
 import { sql } from 'drizzle-orm'
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import type { PositionGroup } from '../formats'
 import type { GameLogEntry } from '../gamelog'
 import type { LiveState } from '../live'
 
-// Coaches. Only an email is stored; how they log in (static password now, Google later) lives outside this table.
+// Coaches. Sign-in is email + password (scrypt hash); Sign in with Apple can be added as another
+// way to reach the same row. Bumping sessionVersion signs the account out everywhere.
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: text('email').notNull().unique(),
+  passwordHash: text('password_hash'),
+  sessionVersion: integer('session_version').notNull().default(1),
+  failedLogins: integer('failed_logins').notNull().default(0),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// A club or league: the unit that owns teams and, later, pays. Coaches only see their clubs' teams.
+export const clubs = pgTable('clubs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const clubMembers = pgTable(
+  'club_members',
+  {
+    clubId: uuid('club_id')
+      .notNull()
+      .references(() => clubs.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // 'admin' manages members, the invite link and deleting teams; 'coach' runs everything else.
+    role: text('role').notNull().default('coach'),
+    joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.clubId, t.userId] }), index('club_members_user_idx').on(t.userId)],
+)
+
+// One shareable invite link per club; resetting it replaces the token.
+export const clubInvites = pgTable('club_invites', {
+  clubId: uuid('club_id')
+    .primaryKey()
+    .references(() => clubs.id, { onDelete: 'cascade' }),
+  token: text('token').notNull().unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
@@ -15,9 +52,11 @@ export const teams = pgTable(
   'teams',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    ownerId: uuid('owner_id')
+    clubId: uuid('club_id')
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => clubs.id, { onDelete: 'cascade' }),
+    // Who created the team; kept if that coach deletes their account.
+    ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
     age: text('age').notNull(),
     // '4v4' | '7v7' | '11v11' | 'custom'
@@ -34,7 +73,7 @@ export const teams = pgTable(
     timeZone: text('time_zone').notNull().default('America/New_York'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('teams_owner_idx').on(t.ownerId)],
+  (t) => [index('teams_owner_idx').on(t.ownerId), index('teams_club_idx').on(t.clubId)],
 )
 
 // Kids: first name only, by design.
@@ -97,4 +136,5 @@ export const games = pgTable(
 export type Team = typeof teams.$inferSelect
 export type Player = typeof players.$inferSelect
 export type Game = typeof games.$inferSelect
+export type Club = typeof clubs.$inferSelect
 export type LiveSessionRow = typeof liveSessions.$inferSelect

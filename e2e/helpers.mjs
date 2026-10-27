@@ -36,12 +36,36 @@ export async function phones(n = 1, iphone) {
   }
 }
 
-export async function login(p, email = 'coach@example.com', password = 'soccer') {
+export const PASSWORD = 'sideline-test-pass'
+
+// Signs in an existing account and waits for the team list (or the create-club page).
+export async function login(p, email, password = PASSWORD) {
   await p.goto(`${BASE}/login`)
   await p.fill('#email', email)
   await p.fill('#password', password)
   await p.click('button:has-text("Sign in")')
-  await p.getByRole('heading', { name: 'Your teams' }).waitFor()
+  await p.waitForURL((u) => !u.pathname.startsWith('/login'))
+}
+
+// A brand-new coach: create an account, then a club (unless joining one through an invite link).
+export async function signup(p, email, { club, invite } = {}) {
+  await p.goto(invite ? invite : `${BASE}/signup`)
+  if (invite) await p.click('a:has-text("Create account")')
+  await p.fill('#email', email)
+  await p.fill('#password', PASSWORD)
+  await p.click('button:has-text("Create account")')
+  if (club) {
+    await p.waitForURL('**/welcome')
+    await p.fill('#name', club)
+    await p.click('button:has-text("Create club")')
+  }
+  await p.waitForURL((u) => u.pathname === '/')
+}
+
+// The club's invite link as the Club page shows it.
+export async function inviteLink(p) {
+  await p.goto(`${BASE}/club`)
+  return (await p.locator('.invite-url').innerText()).trim()
 }
 
 export async function createTeam(p, { name, age, roster, preset }) {

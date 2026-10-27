@@ -3,7 +3,20 @@
 import { and, eq, max } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { checkPassword, endSession, missingSettings, requireSession, startSession, upsertUser } from '@/lib/auth'
+import { changePassword as changeAccountPassword, endSession, missingSettings, requireSession, signIn, signUp, startSession } from '@/lib/auth'
+import {
+  createClub as createClubFor,
+  currentClub,
+  deleteAccount as deleteAccountFor,
+  joinByInvite,
+  myClubs,
+  removeMember as removeClubMember,
+  renameClub as renameClubTo,
+  resetInvite,
+  roleIn,
+  setCurrentClub,
+  setRole,
+} from '@/lib/clubs'
 import { getCoachTeam } from '@/lib/data'
 import { db, schema } from '@/lib/db'
 import { AGES, FORMATS, LIMITS, agePreset, cleanGroups, isAge, type FormatKey } from '@/lib/formats'
@@ -28,24 +41,136 @@ function refreshTeam(teamId: string) {
 
 // ---------- auth ----------
 
-export async function login(_: FormState, fd: FormData): Promise<FormState> {
-  const email = str(fd, 'email').toLowerCase()
-  const password = typeof fd.get('password') === 'string' ? (fd.get('password') as string) : ''
+function signInUnavailable(): FormState | null {
   const missing = missingSettings()
-  if (missing.length) {
-    console.error(`[myteam] sign-in unavailable, missing settings: ${missing.join(', ')}`)
-    return { error: 'Sign-in isn’t available right now. Please try again later.' }
+  if (!missing.length) return null
+  console.error(`[myteam] sign-in unavailable, missing settings: ${missing.join(', ')}`)
+  return { error: 'Sign-in isn’t available right now. Please try again later.' }
+}
+
+// After signing in or up: join the club from an invite link if there was one, otherwise go home
+// (or to creating a club, for a coach who isn't in one yet).
+async function afterAuth(userId: string, invite: string): Promise<never> {
+  if (invite) {
+    const club = await joinByInvite(userId, invite)
+    if (club) {
+      await setCurrentClub(club.id)
+      redirect('/')
+    }
   }
-  if (!email || !password) return { error: 'Enter your email and password.' }
-  if (!checkPassword(email, password)) return { error: 'That email and password don’t match.' }
-  const user = await upsertUser(email)
-  await startSession(user)
-  redirect('/')
+  redirect((await myClubs(userId)).length ? '/' : '/welcome')
+}
+
+export async function login(_: FormState, fd: FormData): Promise<FormState> {
+  const unavailable = signInUnavailable()
+  if (unavailable) return unavailable
+  const password = typeof fd.get('password') === 'string' ? (fd.get('password') as string) : ''
+  const res = await signIn(str(fd, 'email'), password)
+  if (!res.ok) return { error: res.error }
+  await startSession(res.user)
+  return afterAuth(res.user.id, str(fd, 'invite'))
+}
+
+export async function signup(_: FormState, fd: FormData): Promise<FormState> {
+  const unavailable = signInUnavailable()
+  if (unavailable) return unavailable
+  const password = typeof fd.get('password') === 'string' ? (fd.get('password') as string) : ''
+  const res = await signUp(str(fd, 'email'), password)
+  if (!res.ok) return { error: res.error }
+  await startSession(res.user)
+  return afterAuth(res.user.id, str(fd, 'invite'))
 }
 
 export async function logout() {
   await endSession()
   redirect('/login')
+}
+
+export async function changePassword(_: FormState, fd: FormData): Promise<FormState> {
+  const session = await requireSession()
+  const get = (k: string) => (typeof fd.get(k) === 'string' ? (fd.get(k) as string) : '')
+  const res = await changeAccountPassword(session.userId, get('current'), get('next'))
+  if (!res.ok) return { error: res.error }
+  // Every other phone is signed out; this one gets a fresh session.
+  await startSession(res.user)
+  return { ok: 'Password changed. Other phones are signed out.' }
+}
+
+export async function deleteAccount() {
+  const session = await requireSession()
+  await deleteAccountFor(session.userId)
+  await endSession()
+  redirect('/login?deleted=1')
+}
+
+// ---------- clubs ----------
+
+export async function createClub(_: FormState, fd: FormData): Promise<FormState> {
+  const session = await requireSession()
+  const name = str(fd, 'name').slice(0, 60)
+  if (!name) return { error: 'Give your club or league a name.' }
+  const club = await createClubFor(session.userId, name)
+  await setCurrentClub(club.id)
+  revalidatePath('/')
+  redirect('/')
+}
+
+export async function switchClub(fd: FormData) {
+  const session = await requireSession()
+  const clubId = str(fd, 'clubId')
+  if (await roleIn(clubId, session.userId)) await setCurrentClub(clubId)
+  revalidatePath('/')
+  redirect('/')
+}
+
+export async function joinClub(fd: FormData) {
+  const session = await requireSession()
+  const club = await joinByInvite(session.userId, str(fd, 'invite'))
+  if (club) await setCurrentClub(club.id)
+  redirect('/')
+}
+
+async function adminClub(fd: FormData) {
+  const session = await requireSession()
+  const clubId = str(fd, 'clubId')
+  const role = await roleIn(clubId, session.userId)
+  return { session, clubId, isAdmin: role === 'admin', isMember: !!role }
+}
+
+export async function renameClub(_: FormState, fd: FormData): Promise<FormState> {
+  const { clubId, isAdmin } = await adminClub(fd)
+  if (!isAdmin) return { error: 'Only a club admin can rename the club.' }
+  const name = str(fd, 'name').slice(0, 60)
+  if (!name) return { error: 'Give your club or league a name.' }
+  await renameClubTo(clubId, name)
+  revalidatePath('/', 'layout')
+  return { ok: 'Saved.' }
+}
+
+export async function newInviteLink(fd: FormData) {
+  const { clubId, isAdmin } = await adminClub(fd)
+  if (!isAdmin) return
+  await resetInvite(clubId)
+  revalidatePath('/club')
+}
+
+export async function setMemberRole(fd: FormData) {
+  const { clubId, isAdmin } = await adminClub(fd)
+  if (!isAdmin) return
+  const role = str(fd, 'role') === 'admin' ? 'admin' : 'coach'
+  const problem = await setRole(clubId, str(fd, 'userId'), role)
+  if (problem) console.error(`[myteam] role change refused: ${problem}`)
+  revalidatePath('/club')
+}
+
+export async function removeMember(fd: FormData) {
+  const { session, clubId, isAdmin } = await adminClub(fd)
+  const userId = str(fd, 'userId')
+  if (!isAdmin && userId !== session.userId) return
+  const problem = await removeClubMember(clubId, userId)
+  if (problem) return
+  revalidatePath('/', 'layout')
+  if (userId === session.userId) redirect('/')
 }
 
 // ---------- teams ----------
@@ -79,11 +204,13 @@ function parseTeam(fd: FormData) {
 
 export async function createTeam(_: FormState, fd: FormData): Promise<FormState> {
   const session = await requireSession()
+  const { club } = await currentClub(session)
+  if (!club) redirect('/welcome')
   const t = parseTeam(fd)
   const d = await db()
   const [team] = await d
     .insert(teams)
-    .values({ ...t, timeZone: t.timeZone ?? 'America/New_York', ownerId: session.userId })
+    .values({ ...t, timeZone: t.timeZone ?? 'America/New_York', ownerId: session.userId, clubId: club.id })
     .returning({ id: teams.id })
   const names = parseNames(str(fd, 'roster'))
   if (names.length) {
@@ -106,7 +233,8 @@ export async function updateTeam(_: FormState, fd: FormData): Promise<FormState>
 }
 
 export async function deleteTeam(fd: FormData) {
-  const { team } = await getCoachTeam(str(fd, 'teamId'))
+  const { team, isAdmin } = await getCoachTeam(str(fd, 'teamId'))
+  if (!isAdmin) return
   const d = await db()
   await d.delete(teams).where(eq(teams.id, team.id))
   revalidatePath('/')

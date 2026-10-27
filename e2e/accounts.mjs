@@ -1,0 +1,70 @@
+// Accounts: an old AUTH_USERS login becomes an account; wrong passwords lock; changing the password
+// signs other phones out; deleting the account removes it and its solo club.
+import { BASE, PASSWORD, createTeam, fail, login, phones, signup, step } from './helpers.mjs'
+
+const { pages: [phone, other], done } = await phones(2)
+
+// run.sh sets AUTH_USERS with coach@example.com:soccer, as an existing deployment would have.
+await phone.goto(`${BASE}/login`)
+await phone.fill('#email', 'coach@example.com')
+await phone.fill('#password', 'soccer')
+await phone.click('button:has-text("Sign in")')
+await phone.waitForURL('**/welcome')
+await phone.fill('#name', 'Legacy Club')
+await phone.click('button:has-text("Create club")')
+await phone.waitForURL((u) => u.pathname === '/')
+step('an old AUTH_USERS login signs in, becomes an account and sets up a club')
+
+await phone.goto(`${BASE}/signup`)
+await phone.waitForURL((u) => u.pathname === '/')
+await other.goto(`${BASE}/signup`)
+await other.fill('#email', 'coach@example.com')
+await other.fill('#password', 'something-else-long')
+await other.click('button:has-text("Create account")')
+await other.getByText('There’s already an account with that email').waitFor()
+await other.fill('#password', 'short')
+step('signing up again with that email is refused')
+
+await signup(other, 'locky@example.com', { club: 'Lock Club' })
+await other.goto(`${BASE}/account`)
+await other.click('button:has-text("Sign out")')
+await other.waitForURL('**/login')
+for (let i = 0; i < 10; i++) {
+  await other.fill('#email', 'locky@example.com')
+  await other.fill('#password', `wrong-password-${i}`)
+  await other.click('button:has-text("Sign in")')
+  await other.locator('.msg.error').waitFor()
+}
+await other.fill('#password', PASSWORD)
+await other.click('button:has-text("Sign in")')
+await other.getByText('Too many wrong passwords').waitFor()
+step('10 wrong passwords lock the account, even against the right password')
+
+await signup(other, 'mover@example.com', { club: 'Mover Club' })
+const teamUrl = await createTeam(other, { name: 'Movers', age: 'U8', roster: ['Ava', 'Leo'] })
+const second = await (await phone.context().browser().newContext()).newPage()
+await login(second, 'mover@example.com')
+await other.goto(`${BASE}/account`)
+await other.fill('#current', PASSWORD)
+await other.fill('#next', 'a-brand-new-password')
+await other.click('button:has-text("Change password")')
+await other.getByText('Password changed').waitFor()
+await second.goto(teamUrl)
+await second.waitForURL('**/login')
+await other.goto(teamUrl)
+await other.getByRole('heading', { name: 'Movers' }).waitFor()
+step('changing the password signs out the other phone; this one stays signed in')
+
+await other.goto(`${BASE}/account`)
+await other.click('button:has-text("Delete my account")')
+await other.waitForTimeout(800)
+if (!(await other.getByRole('heading', { name: 'Account' }).count())) fail('one tap deleted the account')
+await other.click('button:has-text("Tap again to delete your account")')
+await other.getByText('Your account was deleted.').waitFor()
+await other.fill('#email', 'mover@example.com')
+await other.fill('#password', 'a-brand-new-password')
+await other.click('button:has-text("Sign in")')
+await other.getByText('don’t match').waitFor()
+step('deleting the account signs out and the login no longer works')
+
+await done()

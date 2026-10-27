@@ -227,6 +227,10 @@ textarea { min-height: 120px; line-height: 1.5; resize: vertical; }
 .group-row input { flex: 1; min-width: 0; }
 .group-row .btn { flex: none; width: 52px; padding: 0; }
 
+.invite-url { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--bg); font-family: ui-monospace, Menlo, monospace; font-size: 0.85rem; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+.prose p, .prose li { line-height: 1.55; max-width: 65ch; }
+.prose ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+
 .msg { margin: 0; font-weight: 700; }
 .msg.error { color: var(--danger); }
 .msg.ok { color: var(--turf); }

@@ -1,6 +1,6 @@
 // The game and practice screens on real iPhone sizes in Safari's engine: everything below the clock
 // must be reachable by scrolling and never hidden behind the pinned clock or the bottom buttons.
-import { OUT, createTeam, fail, login, phones, step } from './helpers.mjs'
+import { OUT, createTeam, fail, phones, signup, step } from './helpers.mjs'
 
 // Where the pinned top ends and the fixed bottom bar starts, and whether `sel` sits fully between them.
 const visibleBetweenBars = (p, sel) =>
@@ -18,7 +18,7 @@ const noSideScroll = (p) => p.evaluate(() => document.documentElement.scrollWidt
 for (const iphone of ['iPhone SE (3rd gen)', 'iPhone 16', 'iPhone 13 Mini']) {
   const { pages: [page], done } = await phones(1, iphone)
   const slug = iphone.replace(/\W+/g, '-').toLowerCase()
-  await login(page)
+  await signup(page, `${slug}@example.com`, { club: `Club ${slug}` })
   const teamUrl = await createTeam(page, { name: `Rockets ${slug}`, age: 'U10', roster: ['Owen', 'Nora', 'Jonah', 'Isla', 'Theo', 'June', 'Omar', 'Priya', 'Max', 'Lucy', 'Ben'] })
 
   await page.goto(teamUrl)
