@@ -1,0 +1,1 @@
+ALTER TABLE "players" ADD COLUMN "plays_goalie" boolean DEFAULT true NOT NULL;

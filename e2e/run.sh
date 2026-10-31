@@ -12,7 +12,7 @@ rm -rf .data
 AUTH_USERS='coach@example.com:soccer' npx next dev -p $PORT > e2e/.out/dev.log 2>&1 &
 for i in $(seq 1 60); do curl -s -o /dev/null "http://localhost:$PORT/login" && break; sleep 1; done
 status=0
-for f in ${@:-accounts game groups coaches scrimmage iphone}; do
+for f in ${@:-accounts game groups goalie coaches scrimmage iphone}; do
   echo "--- $f ---"
   node "e2e/$f.mjs" || status=1
 done

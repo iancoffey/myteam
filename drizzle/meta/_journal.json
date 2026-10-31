@@ -50,6 +50,13 @@
       "when": 1793113858313,
       "tag": "0006_accounts_clubs",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793448075389,
+      "tag": "0007_plays_goalie",
+      "breakpoints": true
     }
   ]
 }

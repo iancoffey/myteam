@@ -223,6 +223,22 @@ textarea { min-height: 120px; line-height: 1.5; resize: vertical; }
   font-weight: 700;
 }
 .tag-chip[aria-pressed='true'] { background: var(--turf); color: var(--turf-ink); border-color: transparent; }
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  font-weight: 700;
+  font-size: 1rem;
+  text-align: left;
+}
+.switch { position: relative; width: 52px; height: 32px; border-radius: 999px; background: var(--line); transition: background 0.15s; }
+.switch i { position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 3px rgb(0 0 0 / 0.25); transition: transform 0.15s; }
+.switch-row[aria-checked='true'] .switch { background: var(--turf); }
+.switch-row[aria-checked='true'] .switch i { transform: translateX(20px); }
 .group-row { display: flex; gap: 8px; }
 .group-row input { flex: 1; min-width: 0; }
 .group-row .btn { flex: none; width: 52px; padding: 0; }

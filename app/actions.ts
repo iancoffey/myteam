@@ -302,6 +302,20 @@ export async function setPlayerGroups(input: {
   return { ok: true }
 }
 
+// Called straight from the roster's goalie switch.
+export async function setPlayerGoalie(input: { teamId: string; playerId: string; playsGoalie: boolean }): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { team } = await getCoachTeam(input.teamId)
+  const d = await db()
+  const updated = await d
+    .update(players)
+    .set({ playsGoalie: input.playsGoalie === true })
+    .where(and(eq(players.id, input.playerId), eq(players.teamId, team.id)))
+    .returning({ id: players.id })
+  if (!updated.length) return { ok: false, error: 'That player is no longer on this team.' }
+  refreshTeam(team.id)
+  return { ok: true }
+}
+
 // ---------- saved games ----------
 
 export async function deleteGame(fd: FormData) {

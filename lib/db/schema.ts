@@ -87,6 +87,8 @@ export const players = pgTable(
     firstName: text('first_name').notNull(),
     // Ids from teams.groups this kid is tagged with. Ids of deleted groups are ignored on read.
     groupIds: jsonb('group_ids').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    // Some kids never want to play in goal; they're never made keeper.
+    playsGoalie: boolean('plays_goalie').notNull().default(true),
     sort: integer('sort').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

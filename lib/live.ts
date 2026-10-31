@@ -41,7 +41,7 @@ export type Action =
   | { t: 'lineup'; on: string[]; gk: string | null }
   | { t: 'toCheckin' }
   | { t: 'swap'; pairs: [string, string][]; undoMarks?: number }
-  | { t: 'keeper'; id: string | null; undo?: boolean }
+  | { t: 'keeper'; id: string | null; undo?: boolean; silent?: boolean }
   | { t: 'goal'; side: 'us' | 'them'; d: 1 | -1 }
   | { t: 'start' }
   | { t: 'pause' }
@@ -64,7 +64,9 @@ export type Timed = { a: Action; at: number }
 export type Rules = Pick<TeamSettings, 'periods' | 'periodMin' | 'subMin' | 'keeper' | 'onField'>
 // A live session as the server sends it to phones.
 export type ClientSession = { id: string; kind: Kind; rev: number; state: LiveState }
-export type Kid = { id: string; name: string; groups: string[] }
+// goalie: false for kids who never want to play in goal (missing means they will).
+export type Kid = { id: string; name: string; groups: string[]; goalie?: boolean }
+const willing = (k: Kid) => k.goalie !== false
 
 export function newState(kind: Kind, kidIds: string[], now: number): LiveState {
   return {
@@ -178,7 +180,8 @@ function nextPeriod(st: LiveState) {
 
 // Applies one action at time `now`, in place. Actions that no longer make sense (a kid who is no
 // longer on the bench, a clock that already ended) are ignored rather than failing.
-export function apply(st: LiveState, a: Action, now: number, r: Rules, roster: Set<string>) {
+// `noGoalie` lists kids who are never made keeper.
+export function apply(st: LiveState, a: Action, now: number, r: Rules, roster: Set<string>, noGoalie: Set<string> = new Set()) {
   advance(st, now, r)
   const pm = r.periodMin * MIN
   const live = st.phase === 'live'
@@ -215,7 +218,7 @@ export function apply(st: LiveState, a: Action, now: number, r: Rules, roster: S
       for (const k of Object.values(st.kids)) Object.assign(k, { on: false, gk: false, ms: 0 })
       const on = a.on.filter((id) => roster.has(id) && kid(st, id).here).slice(0, 11)
       for (const id of on) st.kids[id].on = true
-      if (r.keeper && a.gk && on.includes(a.gk)) st.kids[a.gk].gk = true
+      if (r.keeper && a.gk && on.includes(a.gk) && !noGoalie.has(a.gk)) st.kids[a.gk].gk = true
       st.phase = 'live'
       return
     }
@@ -236,8 +239,13 @@ export function apply(st: LiveState, a: Action, now: number, r: Rules, roster: S
         i.on = true
         o.on = false
         if (o.gk) {
+          // The keeper went off: the kid coming on takes goal, or if they never play goalie, the first
+          // willing kid already on the field.
           o.gk = false
-          i.gk = true
+          const next = !noGoalie.has(inId)
+            ? inId
+            : Object.keys(st.kids).find((id) => id !== inId && roster.has(id) && st.kids[id].here && st.kids[id].on && !noGoalie.has(id))
+          if (next) st.kids[next].gk = true
         }
         if (a.undoMarks !== undefined) unlog(st, (e) => e.k === 'sub' && e.in === outId && e.out === inId)
         else if (off) log(st, { ...stamp(st), k: 'sub', in: inId, out: outId })
@@ -251,9 +259,10 @@ export function apply(st: LiveState, a: Action, now: number, r: Rules, roster: S
     }
     case 'keeper': {
       if (!live || !r.keeper) return
-      if (a.id !== null && (!roster.has(a.id) || !kid(st, a.id).on)) return
+      if (a.id !== null && (!roster.has(a.id) || !kid(st, a.id).on || noGoalie.has(a.id))) return
       for (const k of Object.values(st.kids)) k.gk = false
       if (a.id) st.kids[a.id].gk = true
+      if (a.silent) return
       if (a.undo) unlog(st, (e) => e.k === 'keeper')
       else if (a.id && kickedOff(st)) log(st, { ...stamp(st), k: 'keeper', id: a.id })
       return
@@ -370,11 +379,11 @@ export function apply(st: LiveState, a: Action, now: number, r: Rules, roster: S
 // Applies a batch in order, each at the time the coach acted (never before the last applied action and
 // never in the future). The result is left as of the last action, not as of `now`: the time since is
 // added when it's read, and a tap that was waiting behind this batch still lands at its own time.
-export function applyAll(st: LiveState, actions: Timed[], now: number, r: Rules, roster: Set<string>): LiveState {
+export function applyAll(st: LiveState, actions: Timed[], now: number, r: Rules, roster: Set<string>, noGoalie: Set<string> = new Set()): LiveState {
   const s = structuredClone(st)
   for (const { a, at } of actions) {
     const t = Math.min(now, Math.max(s.clock.at, Number.isFinite(at) ? at : now))
-    apply(s, a, t, r, roster)
+    apply(s, a, t, r, roster, noGoalie)
   }
   return s
 }
@@ -383,8 +392,14 @@ export function applyAll(st: LiveState, actions: Timed[], now: number, r: Rules,
 // so it works no matter what other coaches did in the meantime.
 export function inverseOf(before: LiveState, a: Action): Action[] {
   switch (a.t) {
-    case 'swap':
-      return [{ t: 'swap', pairs: a.pairs.map(([i, o]) => [o, i] as [string, string]), undoMarks: before.marksDone }]
+    case 'swap': {
+      // Swap back, then put the keeper back where they were (the swap may have handed goal to someone else).
+      const keeper = Object.entries(before.kids).find(([, k]) => k.gk)?.[0] ?? null
+      return [
+        { t: 'swap', pairs: a.pairs.map(([i, o]) => [o, i] as [string, string]), undoMarks: before.marksDone },
+        { t: 'keeper', id: keeper, silent: true },
+      ]
+    }
     case 'here':
       return [{ t: 'here', id: a.id, here: !a.here, undo: true }]
     case 'keeper': {
@@ -445,7 +460,7 @@ export function buildLineup(
   }
   let keeper: Kid | undefined
   if (r.keeper) {
-    keeper = pool.find((k) => k.groups.some((id) => keeperIds.has(id)))
+    keeper = pool.find((k) => willing(k) && k.groups.some((id) => keeperIds.has(id)))
     if (keeper) take(keeper)
   }
   for (let progress = true; progress && starters.length < r.onField; ) {
@@ -460,7 +475,15 @@ export function buildLineup(
     }
   }
   while (starters.length < r.onField && pool.length) take(pool[0])
-  if (r.keeper && starters.length && !keeper) keeper = starters[Math.floor(rand() * starters.length)]
+  if (r.keeper && starters.length && !keeper) {
+    const able = starters.filter(willing)
+    if (able.length) keeper = able[Math.floor(rand() * able.length)]
+    else {
+      // Nobody starting will play goalie: start a willing kid from the bench in place of the last pick.
+      keeper = pool.find(willing)
+      if (keeper) starters[starters.length - 1] = keeper
+    }
+  }
   return { on: starters.map((k) => k.id), gk: r.keeper && keeper ? keeper.id : null }
 }
 
@@ -502,7 +525,7 @@ export function splitTeams(st: LiveState, kids: Kid[], groups: PositionGroup[], 
     teams[pick].push(id)
     turn = pick + 1
   }
-  const keepers = here.filter((k) => k.groups.some((id) => keeperIds.has(id))).slice(0, n)
+  const keepers = here.filter((k) => willing(k) && k.groups.some((id) => keeperIds.has(id))).slice(0, n)
   for (const k of keepers) deal(k.id)
   const bucket = (k: Kid) => {
     const i = fieldGroups.findIndex((g) => k.groups.includes(g.id))
@@ -543,7 +566,7 @@ export function parseAction(x: unknown): Action | null {
       return { t: 'swap', pairs, ...(isNum(a.undoMarks) ? { undoMarks: Math.max(0, Math.floor(a.undoMarks)) } : {}) }
     }
     case 'keeper':
-      return a.id === null || isId(a.id) ? { t: 'keeper', id: a.id as string | null, undo: a.undo === true } : null
+      return a.id === null || isId(a.id) ? { t: 'keeper', id: a.id as string | null, undo: a.undo === true, silent: a.silent === true } : null
     case 'goal':
       return (a.side === 'us' || a.side === 'them') && (a.d === 1 || a.d === -1) ? { t: 'goal', side: a.side, d: a.d } : null
     case 'adjust':

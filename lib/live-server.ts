@@ -30,11 +30,13 @@ export async function startLive(t: Team, kind: Kind, by: string): Promise<Row> {
 export async function actLive(t: Team, sid: string, actions: Timed[]): Promise<Row | null> {
   const d = await db()
   const rules = teamRules(t)
-  const roster = new Set((await listPlayers(t.id)).map((k) => k.id))
+  const kids = await listPlayers(t.id)
+  const roster = new Set(kids.map((k) => k.id))
+  const noGoalie = new Set(kids.filter((k) => !k.playsGoalie).map((k) => k.id))
   for (let attempt = 0; attempt < 8; attempt++) {
     const [row] = await d.select().from(liveSessions).where(and(eq(liveSessions.id, sid), eq(liveSessions.teamId, t.id)))
     if (!row) return null
-    const next = applyAll(row.state, actions, Date.now(), rules, roster)
+    const next = applyAll(row.state, actions, Date.now(), rules, roster, noGoalie)
     const [saved] = await d
       .update(liveSessions)
       .set({ state: next, version: row.version + 1, updatedAt: new Date() })

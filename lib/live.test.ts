@@ -290,3 +290,48 @@ test('scrimmage sides follow check-in, and a tap moves a kid across', () => {
   assert.equal(parseAction({ t: 'teams', teams: [['a']] }), null)
   assert.deepEqual(parseAction({ t: 'moveKid', id: 'a', to: 1 }), { t: 'moveKid', id: 'a', to: 1 })
 })
+
+test('kids who never play goalie are never made keeper', () => {
+  const groups = [{ id: 'G', name: 'Goalie' }]
+  const noGoalie = new Set(['a', 'b', 'c', 'd', 'e', 'f'])
+  const kids: Kid[] = ids.map((id) => ({ id, name: id, groups: id === 'a' ? ['G'] : [], goalie: !noGoalie.has(id) }))
+  const st = newState('game', ids, T0)
+  for (const id of ids) apply(st, { t: 'here', id, here: true }, T0, r7, roster)
+  for (let seed = 1; seed < 30; seed++) {
+    let x = seed
+    const rand = () => ((x = (x * 9301 + 49297) % 233280) / 233280)
+    const lu = buildLineup(st, kids, r7, groups, {}, rand)
+    assert.ok(lu.gk && !noGoalie.has(lu.gk), `keeper ${lu.gk} must be willing (a is tagged Goalie but won't play)`)
+    assert.ok(lu.on.includes(lu.gk!))
+  }
+  // Only bench kids are willing: one of them starts so there's a keeper.
+  const benchOnly: Kid[] = ids.map((id) => ({ id, name: id, groups: [], goalie: id === 'j' }))
+  const lu = buildLineup(st, benchOnly, r7, [], { j: 99 * MIN })
+  assert.equal(lu.gk, 'j')
+  assert.equal(lu.on.length, 7)
+})
+
+test('server refuses an unwilling keeper; a swap hands goal to a willing kid; undo restores it', () => {
+  const noGoalie = new Set(['h'])
+  const st = liveGame(r7) // a..g on field, a in goal; h, i, j on the bench
+  apply(st, { t: 'keeper', id: 'h', undo: false }, T0, r7, roster, noGoalie)
+  assert.equal(st.kids.a.gk, true, 'h is on the bench anyway')
+  apply(st, { t: 'swap', pairs: [['h', 'b']] }, T0, r7, roster, noGoalie)
+  apply(st, { t: 'keeper', id: 'h' }, T0, r7, roster, noGoalie)
+  assert.equal(st.kids.h.gk, false, 'unwilling kid on the field still can’t go in goal')
+  assert.equal(st.kids.a.gk, true)
+  const before = project(st, T0, r7)
+  const sub: Action = { t: 'swap', pairs: [['i', 'a']] }
+  apply(st, sub, T0, r7, roster, noGoalie)
+  assert.equal(st.kids.i.gk, true, 'willing kid coming on takes goal')
+  const st2 = liveGame(r7)
+  const before2 = project(st2, T0, r7)
+  const sub2: Action = { t: 'swap', pairs: [['h', 'a']] }
+  apply(st2, sub2, T0, r7, roster, noGoalie)
+  assert.equal(st2.kids.h.gk, false, 'h won’t play goalie')
+  assert.equal(Object.values(st2.kids).filter((k) => k.gk).length, 1, 'someone willing on the field took goal')
+  for (const inv of inverseOf(before2, sub2)) apply(st2, inv, T0, r7, roster, noGoalie)
+  assert.equal(st2.kids.a.gk, true, 'undo puts the original keeper back in goal')
+  assert.equal(Object.values(st2.kids).filter((k) => k.gk).length, 1)
+  assert.ok(before)
+})

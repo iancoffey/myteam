@@ -53,7 +53,8 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
     [S.periods, S.periodMin, S.subMin, S.keeper, S.onField],
   )
   const roster = useMemo(() => new Set(kids.map((k) => k.id)), [kids])
-  const live = useLive(teamId, initial, rules, roster)
+  const noGoalie = useMemo(() => new Set(kids.filter((k) => k.goalie === false).map((k) => k.id)), [kids])
+  const live = useLive(teamId, initial, rules, roster, noGoalie)
   const [, tick] = useReducer((x: number) => x + 1, 0)
   const [selected, setSelected] = useState<string | null>(null)
   const [sheet, setSheet] = useState<null | 'menu' | 'log'>(null)
@@ -565,13 +566,15 @@ export function FieldMode({ teamId, teamName, age, settings: S, groups, kids, se
 
   let call: React.ReactNode
   if (sel && selP) {
-    const canKeep = S.keeper && selP.on && !selP.gk
+    const refuses = noGoalie.has(sel.id)
+    const canKeep = S.keeper && selP.on && !selP.gk && !refuses
     const matches = fieldGroups.length > 0 && kids.some((k) => ks(k.id).here && ks(k.id).on !== selP.on && sharesFieldGroup(sel, k))
     call = (
       <>
         <p>
           <b>{sel.name}</b> selected. Tap a player {selP.on ? 'on the bench' : 'on the field'} to swap
           {matches ? '. Outlined players share a position group.' : '.'}
+          {S.keeper && refuses ? ` ${sel.name} doesn’t play goalie.` : ''}
         </p>
         <div className="btn-grid">
           {canKeep && (

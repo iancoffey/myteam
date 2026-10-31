@@ -15,7 +15,7 @@ const POLL_MS = 2000
 // - With no signal, taps wait on this phone (surviving a reload) and are sent when it's back;
 //   each carries the time it happened, so the clock and minutes still come out right.
 // - Clocks use server time, so every phone shows the same countdown.
-export function useLive(teamId: string, initial: Initial, rules: Rules, roster: Set<string>) {
+export function useLive(teamId: string, initial: Initial, rules: Rules, roster: Set<string>, noGoalie: Set<string>) {
   const key = `myteam.live.${teamId}`
   const [, force] = useReducer((x: number) => x + 1, 0)
   const data = useRef<{ confirmed: ClientSession | null; pending: Pending[] }>({ confirmed: initial.session, pending: [] })
@@ -179,7 +179,7 @@ export function useLive(teamId: string, initial: Initial, rules: Rules, roster: 
   if (c && !ended.current) {
     state = structuredClone(c.state)
     const now = serverNow()
-    for (const p of data.current.pending) apply(state, p.a, Math.max(state.clock.at, Math.min(p.at, now)), rules, roster)
+    for (const p of data.current.pending) apply(state, p.a, Math.max(state.clock.at, Math.min(p.at, now)), rules, roster, noGoalie)
     advance(state, now, rules)
   }
 

@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { addPlayers, removePlayer, renamePlayer } from '@/app/actions'
 import { ActionForm } from '@/components/ActionForm'
 import { ConfirmButton } from '@/components/ConfirmButton'
+import { GoalieToggle } from '@/components/GoalieToggle'
 import { GroupChips } from '@/components/GroupChips'
 import { getCoachTeam, listPlayers } from '@/lib/data'
 import { cleanGroups } from '@/lib/formats'
@@ -53,6 +54,8 @@ export default async function RosterPage({ params }: { params: Promise<{ id: str
             {groups.length > 0 && (
               <GroupChips teamId={t.id} playerId={k.id} groups={groups} selected={k.groupIds.filter((gid) => groups.some((g) => g.id === gid))} />
             )}
+
+            {t.keeper && <GoalieToggle teamId={t.id} playerId={k.id} playsGoalie={k.playsGoalie} />}
 
             <details>
               <summary>Rename</summary>

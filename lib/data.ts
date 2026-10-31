@@ -67,7 +67,10 @@ export async function sessionKids(t: Team) {
   const groups = cleanGroups(t.groups)
   const valid = new Set(groups.map((g) => g.id))
   const kids = await listPlayers(t.id)
-  return { groups, kids: kids.map((k) => ({ id: k.id, name: k.firstName, groups: k.groupIds.filter((id) => valid.has(id)) })) }
+  return {
+    groups,
+    kids: kids.map((k) => ({ id: k.id, name: k.firstName, groups: k.groupIds.filter((id) => valid.has(id)), goalie: k.playsGoalie })),
+  }
 }
 
 export async function getLive(teamId: string) {
